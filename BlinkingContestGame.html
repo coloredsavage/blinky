@@ -9,6 +9,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <!-- Add drawing_utils CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- PeerJS CDN for multiplayer -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
 body {
   margin: 0;
@@ -197,24 +199,49 @@ video, canvas {
 </head>
 <body>
   <div class="title">Blinky by DraftOne 👀</div>
-  <div class="glass">
-    <div class="video-container">
+  <div id="welcomeScreen" class="glass">
+    <div style="margin-bottom:1rem;">
+      <button class="btn" id="singlePlayerBtn">Single Player</button>
+      <button class="btn" id="multiPlayerBtn">Multiplayer</button>
+    </div>
+    <div id="usernameSection" style="display:none; flex-direction:column; align-items:center;">
+      <input id="usernameInput" type="text" placeholder="Enter your username" style="margin-bottom:1rem; font-size:1rem; padding:0.5rem;">
+      <div id="roomActions" style="display:none;">
+        <button class="btn" id="createRoomBtn">Create Room</button>
+        <input id="roomIdInput" type="text" placeholder="Room ID or Link" style="margin:0.5rem;">
+        <button class="btn" id="joinRoomBtn">Join Room</button>
+      </div>
+      <div id="roomLinkSection" style="display:none; margin-top:1rem;">
+        <span>Share this link:</span>
+        <input id="roomLink" type="text" readonly style="width:320px; font-size:0.9rem; margin-top:0.5rem;">
+      </div>
+      <div id="waitingForPlayer" style="display:none; margin-top:1rem; color:#fff;">Waiting for another player to join...</div>
+    </div>
+  </div>
+  <div id="gameScreen" class="glass" style="display:none;">
+    <div class="video-container" id="videoContainer">
       <video id="video" autoplay muted playsinline></video>
       <canvas id="overlay"></canvas>
+    </div>
+    <div class="video-container" id="remoteVideoContainer" style="display:none;">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <canvas id="remoteOverlay"></canvas>
     </div>
     <div class="eye-status" id="eyeStatus">
       <span class="eye" id="leftEye">👁️</span>
       <span class="eye" id="rightEye">👁️</span>
     </div>
-    <div class="player-panel">
-      <div class="player current" id="player1">Current Player</div>
+    <div class="player-panel" id="playerPanel">
+      <div class="player current" id="player1">You</div>
+      <div class="player" id="player2" style="display:none;">Opponent</div>
     </div>
     <div class="score-panel">
       <div class="score" id="score1">Time: 0s</div>
       <div class="score" id="bestScore">Best: 0s</div>
     </div>
     <div class="winner" id="winner"></div>
-    <div class="controls">
+    <div class="controls" id="gameControls">
+      <button class="btn" id="readyBtn" style="display:none;">Ready</button>
       <button class="btn" id="startBtn">Start</button>
       <button class="btn" id="resetBtn">Reset</button>
     </div>
@@ -228,11 +255,10 @@ video, canvas {
       - Try to beat your best time!<br>
       - Green eye outlines show detection is working<br>
       <br>
-      <strong>MAJOR FIXES:</strong><br>
-      - Correct eye landmark indices for MediaPipe 468 model<br>
-      - Proper EAR calculation using 6-point formula<br>
-      - More sensitive blink threshold (0.20)<br>
-      - Shorter blink duration (150ms) for better detection
+      <strong>Multiplayer:</strong><br>
+      - Create or join a room, share the link<br>
+      - Both players must click "Ready" to start<br>
+      - Whoever blinks first loses!
     </div>
   </div>
   <div class="popup" id="cameraPopup" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); color:#fff; font-family:monospace; z-index:9999; align-items:center; justify-content:center; flex-direction:column;">
@@ -243,6 +269,37 @@ video, canvas {
     </div>
   </div>
   <script>
+    // Multiplayer state
+    let isMultiplayer = false;
+    let username = '';
+    let roomId = '';
+    let isHost = false;
+    let isReady = false;
+    let opponentReady = false;
+    let opponentUsername = '';
+    let remoteStream = null;
+    let peer = null;
+    let conn = null;
+    let remoteVideo = null;
+    let remoteOverlay = null;
+    let remoteVideoContainer = null;
+    let readyBtn = null;
+    let playerPanel = null;
+    let player2 = null;
+    // Welcome screen elements
+    let welcomeScreen = null;
+    let gameScreen = null;
+    let singlePlayerBtn = null;
+    let multiPlayerBtn = null;
+    let usernameSection = null;
+    let usernameInput = null;
+    let roomActions = null;
+    let createRoomBtn = null;
+    let joinRoomBtn = null;
+    let roomIdInput = null;
+    let roomLinkSection = null;
+    let roomLink = null;
+    let waitingForPlayer = null;
     // FIXED: Correct eye landmark indices for MediaPipe Face Mesh (468 landmarks)
     // These are the correct indices for the 6-point EAR calculation
     const LEFT_EYE_INDICES = {
@@ -627,15 +684,206 @@ function drawEyesCrop(landmarks) {
       }
     }
 
-    // Button events
-    startBtn.onclick = () => {
-      if (!isGameActive) {
+    // Multiplayer UI logic
+    function setupMultiplayerUI() {
+      welcomeScreen = document.getElementById('welcomeScreen');
+      gameScreen = document.getElementById('gameScreen');
+      singlePlayerBtn = document.getElementById('singlePlayerBtn');
+      multiPlayerBtn = document.getElementById('multiPlayerBtn');
+      usernameSection = document.getElementById('usernameSection');
+      usernameInput = document.getElementById('usernameInput');
+      roomActions = document.getElementById('roomActions');
+      createRoomBtn = document.getElementById('createRoomBtn');
+      joinRoomBtn = document.getElementById('joinRoomBtn');
+      roomIdInput = document.getElementById('roomIdInput');
+      roomLinkSection = document.getElementById('roomLinkSection');
+      roomLink = document.getElementById('roomLink');
+      waitingForPlayer = document.getElementById('waitingForPlayer');
+      remoteVideo = document.getElementById('remoteVideo');
+      remoteOverlay = document.getElementById('remoteOverlay');
+      remoteVideoContainer = document.getElementById('remoteVideoContainer');
+      readyBtn = document.getElementById('readyBtn');
+      playerPanel = document.getElementById('playerPanel');
+      player2 = document.getElementById('player2');
+
+      singlePlayerBtn.onclick = () => {
+        isMultiplayer = false;
+        welcomeScreen.style.display = 'none';
+        gameScreen.style.display = 'flex';
+        remoteVideoContainer.style.display = 'none';
+        player2.style.display = 'none';
+        startBtn.style.display = '';
+        readyBtn.style.display = 'none';
+        resetGame();
+        requestCameraAccess();
+      };
+      multiPlayerBtn.onclick = () => {
+        isMultiplayer = true;
+        usernameSection.style.display = 'flex';
+        roomActions.style.display = 'flex';
+      };
+      createRoomBtn.onclick = () => {
+        username = usernameInput.value.trim();
+        if (!username) { alert('Enter your username'); return; }
+        isHost = true;
+        roomId = Math.random().toString(36).substr(2, 8);
+        roomLinkSection.style.display = 'block';
+        roomLink.value = window.location.origin + window.location.pathname + '?room=' + roomId;
+        waitingForPlayer.style.display = 'block';
+        setupPeerHost();
+      };
+      joinRoomBtn.onclick = () => {
+        username = usernameInput.value.trim();
+        if (!username) { alert('Enter your username'); return; }
+        let inputVal = roomIdInput.value.trim();
+        if (!inputVal) { alert('Enter room ID or link'); return; }
+        isHost = false;
+        roomId = inputVal.replace(/.*room=([a-zA-Z0-9]+).*/, '$1');
+        setupPeerJoin();
+      };
+      readyBtn.onclick = () => {
+        isReady = true;
+        readyBtn.textContent = 'Waiting for opponent...';
+        if (conn) conn.send({ type: 'ready', username });
+      };
+      startBtn.onclick = () => {
+        if (!isGameActive) {
+          startGame();
+        }
+      };
+      resetBtn.onclick = () => {
+        resetGame();
+      };
+    }
+
+    // PeerJS logic
+    function setupPeerHost() {
+      peer = new Peer(roomId, { host: 'peerjs.com', port: 443, path: '/', secure: true });
+      peer.on('open', function(id) {
+        // Wait for connection
+        peer.on('connection', function(connection) {
+          conn = connection;
+          conn.on('data', handlePeerData);
+          // Send host username
+          conn.send({ type: 'host', username });
+          // Setup video call
+          startHostCall();
+        });
+      });
+    }
+    function setupPeerJoin() {
+      peer = new Peer({ host: 'peerjs.com', port: 443, path: '/', secure: true });
+      peer.on('open', function(id) {
+        conn = peer.connect(roomId);
+        conn.on('open', function() {
+          conn.send({ type: 'join', username });
+        });
+        conn.on('data', handlePeerData);
+        // Setup video call
+        startJoinCall();
+      });
+    }
+    function handlePeerData(data) {
+      if (data.type === 'host') {
+        opponentUsername = data.username;
+        player2.textContent = opponentUsername;
+        player2.style.display = '';
+      }
+      if (data.type === 'join') {
+        opponentUsername = data.username;
+        player2.textContent = opponentUsername;
+        player2.style.display = '';
+        readyBtn.style.display = '';
+        startBtn.style.display = 'none';
+        waitingForPlayer.style.display = 'none';
+        welcomeScreen.style.display = 'none';
+        gameScreen.style.display = 'flex';
+        remoteVideoContainer.style.display = 'block';
+      }
+      if (data.type === 'ready') {
+        opponentReady = true;
+        player2.textContent = opponentUsername + ' (Ready)';
+        if (isReady) {
+          readyBtn.style.display = 'none';
+          startBtn.style.display = '';
+        }
+      }
+      if (data.type === 'start') {
         startGame();
+      }
+      if (data.type === 'blink') {
+        isGameActive = false;
+        winnerEl.textContent = opponentUsername + ' blinked! You win! 🎉';
+        winnerEl.style.display = 'block';
+        startBtn.textContent = 'Start';
+      }
+    }
+    function startHostCall() {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+        video.srcObject = stream;
+        let call = peer.call(conn.peer, stream);
+        call.on('stream', function(remoteStream) {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideoContainer.style.display = 'block';
+        });
+        setupFaceMesh();
+        setupCamera();
+        loading.textContent = 'Ready! Click Ready when opponent joins.';
+      });
+    }
+    function startJoinCall() {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+        video.srcObject = stream;
+        let call = peer.call(roomId, stream);
+        call.on('stream', function(remoteStream) {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideoContainer.style.display = 'block';
+        });
+        setupFaceMesh();
+        setupCamera();
+        loading.textContent = 'Ready! Click Ready.';
+      });
+      peer.on('call', function(call) {
+        navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+          call.answer(stream);
+          call.on('stream', function(remoteStream) {
+            remoteVideo.srcObject = remoteStream;
+            remoteVideoContainer.style.display = 'block';
+          });
+        });
+      });
+    }
+
+    // Override startGame for multiplayer
+    const originalStartGame = startGame;
+    startGame = function() {
+      if (isMultiplayer) {
+        if (conn) conn.send({ type: 'start' });
+        originalStartGame();
+      } else {
+        originalStartGame();
       }
     };
 
-    resetBtn.onclick = () => {
-      resetGame();
+    // Override processBlink for multiplayer
+    const originalProcessBlink = processBlink;
+    processBlink = function(leftEAR, rightEAR, timestamp) {
+      originalProcessBlink(leftEAR, rightEAR, timestamp);
+      if (isMultiplayer && isGameActive) {
+        // If blink detected, send to opponent
+        const BLINK_THRESHOLD = 0.20;
+        const BLINK_DURATION_MS = 80;
+        const leftClosed = leftEAR < BLINK_THRESHOLD;
+        const rightClosed = rightEAR < BLINK_THRESHOLD;
+        const bothClosed = leftClosed && rightClosed;
+        if (bothClosed) {
+          if (!bothEyesClosedStart) {
+            bothEyesClosedStart = timestamp;
+          } else if (timestamp - bothEyesClosedStart >= BLINK_DURATION_MS) {
+            if (conn) conn.send({ type: 'blink' });
+          }
+        }
+      }
     };
 
     cameraPopup = document.getElementById('cameraPopup');
@@ -672,11 +920,20 @@ function drawEyesCrop(landmarks) {
 
     // Init
     function init() {
-      resetGame();
-      loading.textContent = 'Loading MediaPipe and Camera...';
-      showCameraPopup();
+      setupMultiplayerUI();
+      welcomeScreen.style.display = 'flex';
+      gameScreen.style.display = 'none';
+      usernameSection.style.display = 'none';
+      roomActions.style.display = 'none';
+      roomLinkSection.style.display = 'none';
+      waitingForPlayer.style.display = 'none';
+      // If joining via link
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('room')) {
+        roomIdInput.value = params.get('room');
+        multiPlayerBtn.click();
+      }
     }
-
     window.onload = init;
   </script>
 </body>

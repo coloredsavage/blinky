@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Blinking Contest Game</title>
+  <title>Blinky by DraftOne</title>
   <!-- MediaPipe FaceMesh for browser -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -160,6 +160,34 @@ video, canvas {
   padding: 0.3rem;
   border-radius: 4px;
 }
+.popup {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-family: monospace;
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+.popup div {
+  background: #222;
+  padding: 2rem 2.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 16px #000;
+  text-align: center;
+}
+.popup h2 {
+  margin-bottom: 1rem;
+}
+.popup p {
+  margin-bottom: 1.5rem;
+}
 @media (max-width: 600px) {
   .video-container { width: 98vw; height: 62vw; max-width: 98vw; max-height: 62vw; }
   .glass { padding: 0.5rem 0.2rem; }
@@ -168,7 +196,7 @@ video, canvas {
   </style>
 </head>
 <body>
-  <div class="title">Blinking Contest Game 👀</div>
+  <div class="title">Blinky by DraftOne 👀</div>
   <div class="glass">
     <div class="video-container">
       <video id="video" autoplay muted playsinline></video>
@@ -205,6 +233,13 @@ video, canvas {
       - Proper EAR calculation using 6-point formula<br>
       - More sensitive blink threshold (0.20)<br>
       - Shorter blink duration (150ms) for better detection
+    </div>
+  </div>
+  <div class="popup" id="cameraPopup" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); color:#fff; font-family:monospace; z-index:9999; align-items:center; justify-content:center; flex-direction:column;">
+    <div style="background:#222; padding:2rem 2.5rem; border-radius:8px; box-shadow:0 2px 16px #000; text-align:center;">
+      <h2 style="margin-bottom:1rem;">Camera Access Required</h2>
+      <p style="margin-bottom:1.5rem;">To play the Blinking Contest Game, please allow access to your camera.<br>Click the button below and grant permission in your browser popup.</p>
+      <button id="grantCameraBtn" class="btn" style="margin-top:0.5rem;">Grant Camera Access</button>
     </div>
   </div>
   <script>
@@ -296,6 +331,8 @@ video, canvas {
     let resetBtn = document.getElementById('resetBtn');
     let scoreEl = document.getElementById('score1');
     let bestScoreEl = document.getElementById('bestScore');
+    let cameraPopup = null;
+    let grantCameraBtn = null;
     guideEl = document.getElementById('guide');
 
     // Timer update
@@ -563,15 +600,43 @@ video, canvas {
       resetGame();
     };
 
+    cameraPopup = document.getElementById('cameraPopup');
+    grantCameraBtn = document.getElementById('grantCameraBtn');
+
+    function showCameraPopup() {
+      if (cameraPopup) cameraPopup.style.display = 'flex';
+    }
+    function hideCameraPopup() {
+      if (cameraPopup) cameraPopup.style.display = 'none';
+    }
+
+    function requestCameraAccess() {
+      // Try to access camera, show popup if not granted
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+          hideCameraPopup();
+          video.srcObject = stream;
+          setupFaceMesh();
+          setupCamera();
+          setTimeout(() => {
+            loading.textContent = 'Ready! Click Start to play.';
+          }, 2000);
+        })
+        .catch(() => {
+          showCameraPopup();
+        });
+    }
+
+    grantCameraBtn.onclick = () => {
+      hideCameraPopup();
+      requestCameraAccess();
+    };
+
     // Init
     function init() {
       resetGame();
       loading.textContent = 'Loading MediaPipe and Camera...';
-      setupFaceMesh();
-      setupCamera();
-      setTimeout(() => {
-        loading.textContent = 'Ready! Click Start to play.';
-      }, 2000);
+      showCameraPopup();
     }
 
     window.onload = init;

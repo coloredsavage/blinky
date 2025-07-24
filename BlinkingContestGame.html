@@ -43,10 +43,10 @@ body {
 }
 .video-container {
   position: relative;
-  width: 480px;
-  height: 360px;
+  width: 600px;
+  height: 180px;
   margin-bottom: 1rem;
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
   background: #222;
 }
@@ -54,7 +54,7 @@ video, canvas {
   position: absolute;
   top: 0; left: 0;
   width: 100%; height: 100%;
-  border-radius: 8px;
+  border-radius: 0;
   object-fit: cover;
 }
 .eye-status {
@@ -453,6 +453,43 @@ video, canvas {
       ctx.restore();
     }
 
+    // Helper to get bounding box around both eyes
+function getEyesBoundingBox(landmarks) {
+  const leftIndices = [33, 133, 160, 144, 158, 153];
+  const rightIndices = [362, 263, 387, 373, 385, 380];
+  const points = [...leftIndices, ...rightIndices].map(i => landmarks[i]).filter(Boolean);
+  if (points.length === 0) return null;
+  let minX = Math.min(...points.map(p => p.x));
+  let maxX = Math.max(...points.map(p => p.x));
+  let minY = Math.min(...points.map(p => p.y));
+  let maxY = Math.max(...points.map(p => p.y));
+  return { minX, maxX, minY, maxY };
+}
+
+function drawEyesCrop(landmarks) {
+  // Get bounding box
+  const box = getEyesBoundingBox(landmarks);
+  if (!box) return;
+  const w = overlay.width;
+  const h = overlay.height;
+  // Expand box a bit for padding
+  const padX = 0.08;
+  const padY = 0.12;
+  let x = Math.max(0, (box.minX - padX) * w);
+  let y = Math.max(0, (box.minY - padY) * h);
+  let width = Math.min(w, (box.maxX - box.minX + 2 * padX) * w);
+  let height = Math.min(h, (box.maxY - box.minY + 2 * padY) * h);
+  // Scale up the eyes region to fill the canvas
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  // Fill background with black
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  // Draw cropped and scaled eyes from video
+  ctx.drawImage(video, x, y, width, height, 0, 0, w, h);
+  ctx.restore();
+}
+
     // Eye status UI
     function setEyeStatus(leftOpen, rightOpen) {
       leftEyeStatus.className = 'eye' + (leftOpen ? '' : ' closed');
@@ -571,8 +608,9 @@ video, canvas {
       
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
-        drawFaceLandmarks(landmarks);
-        
+        drawEyesCrop(landmarks); // Show only cropped eyes
+        // Optionally overlay eye landmarks for debugging
+        // drawFaceLandmarks(landmarks);
         if (!isFaceCentered(landmarks)) {
           showGuide('Please center your face in the camera for best detection.');
         } else {

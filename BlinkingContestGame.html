@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blinking Contest Game</title>
+  <!-- MediaPipe FaceMesh for browser -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <!-- Add drawing_utils CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <style>
+body {
+  margin: 0;
+  font-family: monospace;
+  background: #000;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow-x: hidden;
+}
+    .title {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #fff;
+  text-align: center;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  letter-spacing: 1px;
+    }
+/* Remove title animation */
+.glass {
+  background: #111;
+  border-radius: 8px;
+  border: 1px solid #222;
+  padding: 1rem 1rem;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.video-container {
+  position: relative;
+  width: 480px;
+  height: 360px;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #222;
+}
+video, canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.eye-status {
+  font-size: 1.5rem;
+  margin: 0.5rem 0;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+}
+.eye {
+  color: #fff;
+}
+.eye.closed {
+  color: #ff4f81;
+}
+/* Remove blink animation */
+.player-panel {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  justify-content: center;
+}
+.player {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  background: #222;
+  font-size: 1rem;
+  font-weight: bold;
+  color: #fff;
+  border: 1px solid #333;
+}
+.player.current {
+  background: #fff;
+  color: #000;
+  border: 1px solid #fff;
+}
+.score-panel {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  justify-content: center;
+}
+.score {
+  font-size: 1rem;
+  color: #fff;
+  background: #222;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+}
+.winner {
+  font-size: 1.2rem;
+  color: #fff;
+  font-weight: bold;
+  text-align: center;
+  margin: 1rem 0;
+  display: none;
+}
+/* Remove winner animation */
+.controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  justify-content: center;
+}
+.btn {
+  padding: 0.5rem 1.2rem;
+  font-size: 1rem;
+  font-weight: bold;
+  border-radius: 4px;
+  border: 1px solid #333;
+  background: #222;
+  color: #fff;
+  cursor: pointer;
+}
+.btn:hover {
+  background: #333;
+}
+.instructions {
+  background: #111;
+  border-radius: 4px;
+  padding: 0.7rem 1rem;
+  color: #fff;
+  font-size: 0.9rem;
+  margin-top: 1rem;
+  max-width: 480px;
+  text-align: left;
+  line-height: 1.4;
+}
+.loading {
+  color: #fff;
+  font-size: 1rem;
+  margin: 1rem 0;
+  text-align: center;
+}
+.debug {
+  color: #fff;
+  font-size: 0.8rem;
+  margin: 0.5rem 0;
+  text-align: center;
+  font-family: monospace;
+  background: #222;
+  padding: 0.3rem;
+  border-radius: 4px;
+}
+@media (max-width: 600px) {
+  .video-container { width: 98vw; height: 62vw; max-width: 98vw; max-height: 62vw; }
+  .glass { padding: 0.5rem 0.2rem; }
+  .instructions { max-width: 98vw; }
+}
+  </style>
+</head>
+<body>
+  <div class="title">Blinking Contest Game 👀</div>
+  <div class="glass">
+    <div class="video-container">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="eye-status" id="eyeStatus">
+      <span class="eye" id="leftEye">👁️</span>
+      <span class="eye" id="rightEye">👁️</span>
+    </div>
+    <div class="player-panel">
+      <div class="player current" id="player1">Current Player</div>
+    </div>
+    <div class="score-panel">
+      <div class="score" id="score1">Time: 0s</div>
+      <div class="score" id="bestScore">Best: 0s</div>
+    </div>
+    <div class="winner" id="winner"></div>
+    <div class="controls">
+      <button class="btn" id="startBtn">Start</button>
+      <button class="btn" id="resetBtn">Reset</button>
+    </div>
+    <div class="loading" id="loading">Loading MediaPipe and Camera...</div>
+    <div class="debug" id="debug">EAR values will appear here</div>
+    <div class="debug" id="guide" style="color:#ff4f81; display:none;"></div>
+    <div class="instructions">
+      <strong>How to Play:</strong><br>
+      - Keep both eyes open as long as possible<br>
+      - If you blink (both eyes closed for ≥150ms), you lose<br>
+      - Try to beat your best time!<br>
+      - Green eye outlines show detection is working<br>
+      <br>
+      <strong>MAJOR FIXES:</strong><br>
+      - Correct eye landmark indices for MediaPipe 468 model<br>
+      - Proper EAR calculation using 6-point formula<br>
+      - More sensitive blink threshold (0.20)<br>
+      - Shorter blink duration (150ms) for better detection
+    </div>
+  </div>
+  <script>
+    // FIXED: Correct eye landmark indices for MediaPipe Face Mesh (468 landmarks)
+    // These are the correct indices for the 6-point EAR calculation
+    const LEFT_EYE_INDICES = {
+      // Horizontal points (corners)
+      outer: 33,    // Left outer corner
+      inner: 133,   // Left inner corner
+      // Vertical points (top and bottom)
+      top1: 160,    // Top of eye (first vertical point)
+      bottom1: 144, // Bottom of eye (first vertical point)
+      top2: 158,    // Top of eye (second vertical point) 
+      bottom2: 153  // Bottom of eye (second vertical point)
+    };
+
+    const RIGHT_EYE_INDICES = {
+      // Horizontal points (corners)
+      outer: 362,   // Right outer corner
+      inner: 263,   // Right inner corner
+      // Vertical points (top and bottom)
+      top1: 387,    // Top of eye (first vertical point)
+      bottom1: 373, // Bottom of eye (first vertical point)
+      top2: 385,    // Top of eye (second vertical point)
+      bottom2: 380  // Bottom of eye (second vertical point)
+    };
+
+    // Full eye contour for drawing (optional - for visualization)
+    const LEFT_EYE_CONTOUR = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+    const RIGHT_EYE_CONTOUR = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398];
+
+    function euclidean(p1, p2) {
+      if (!p1 || !p2) return 0;
+      return Math.hypot(p1.x - p2.x, p1.y - p2.y, (p1.z || 0) - (p2.z || 0));
+    }
+
+    function getEAR(landmarks, eyeIndices) {
+      // FIXED: Proper 6-point EAR calculation
+      if (!landmarks) return 0.4; // Default open eye
+      
+      try {
+        // Get the 6 key points for EAR calculation
+        const outer = landmarks[eyeIndices.outer];
+        const inner = landmarks[eyeIndices.inner];
+        const top1 = landmarks[eyeIndices.top1];
+        const bottom1 = landmarks[eyeIndices.bottom1];
+        const top2 = landmarks[eyeIndices.top2];
+        const bottom2 = landmarks[eyeIndices.bottom2];
+
+        // Check if all points exist
+        if (!outer || !inner || !top1 || !bottom1 || !top2 || !bottom2) {
+          return 0.4; // Default to open eye
+        }
+
+        // Calculate distances
+        const vertical1 = euclidean(top1, bottom1);
+        const vertical2 = euclidean(top2, bottom2);
+        const horizontal = euclidean(outer, inner);
+
+        if (horizontal === 0) return 0.4; // Avoid division by zero
+
+        // EAR formula: (|p2-p6| + |p3-p5|) / (2 * |p1-p4|)
+        const ear = (vertical1 + vertical2) / (2.0 * horizontal);
+        return Math.max(0, Math.min(1, ear)); // Clamp between 0 and 1
+      } catch (error) {
+        console.warn('EAR calculation error:', error);
+        return 0.4; // Default to open eye on error
+      }
+    }
+
+    // Game state
+    let isGameActive = false;
+    let gameStartTime = null;
+    let bestTime = 0;
+    let bothEyesClosedStart = null;
+    let faceMesh = null;
+    
+    // DOM elements
+    let video = document.getElementById('video');
+    let overlay = document.getElementById('overlay');
+    let ctx = overlay.getContext('2d');
+    let loading = document.getElementById('loading');
+    let debug = document.getElementById('debug');
+    let guideEl = null;
+    let leftEyeStatus = document.getElementById('leftEye');
+    let rightEyeStatus = document.getElementById('rightEye');
+    let winnerEl = document.getElementById('winner');
+    let startBtn = document.getElementById('startBtn');
+    let resetBtn = document.getElementById('resetBtn');
+    let scoreEl = document.getElementById('score1');
+    let bestScoreEl = document.getElementById('bestScore');
+    guideEl = document.getElementById('guide');
+
+    // Timer update
+    function updateTimer() {
+      if (isGameActive && gameStartTime) {
+        const elapsed = Math.floor((Date.now() - gameStartTime) / 1000);
+        scoreEl.textContent = `Time: ${elapsed}s`;
+        
+        if (isGameActive) {
+          setTimeout(updateTimer, 100);
+        }
+      }
+    }
+
+    // Camera setup
+    let camera = null;
+    function setupCamera() {
+      camera = new Camera(video, {
+        onFrame: async () => {
+          if (faceMesh) {
+            await faceMesh.send({image: video});
+          }
+        },
+        width: 480,
+        height: 360
+      });
+      camera.start();
+    }
+
+    // MediaPipe setup
+    function setupFaceMesh() {
+      faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      faceMesh.onResults(onResults);
+    }
+
+    function drawFaceLandmarks(landmarks) {
+      ctx.save();
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      
+      // Draw eye contours
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      
+      // Draw left eye
+      ctx.beginPath();
+      LEFT_EYE_CONTOUR.forEach((index, i) => {
+        const point = landmarks[index];
+        if (point) {
+          const x = point.x * overlay.width;
+          const y = point.y * overlay.height;
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.closePath();
+      ctx.stroke();
+      
+      // Draw right eye
+      ctx.beginPath();
+      RIGHT_EYE_CONTOUR.forEach((index, i) => {
+        const point = landmarks[index];
+        if (point) {
+          const x = point.x * overlay.width;
+          const y = point.y * overlay.height;
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+      });
+      ctx.closePath();
+      ctx.stroke();
+      
+      // Draw key EAR points for debugging
+      ctx.fillStyle = '#FF0000';
+      ctx.strokeStyle = '#FF0000';
+      
+      // Left eye key points
+      [LEFT_EYE_INDICES.outer, LEFT_EYE_INDICES.inner, LEFT_EYE_INDICES.top1, 
+       LEFT_EYE_INDICES.bottom1, LEFT_EYE_INDICES.top2, LEFT_EYE_INDICES.bottom2].forEach(index => {
+        const point = landmarks[index];
+        if (point) {
+          const x = point.x * overlay.width;
+          const y = point.y * overlay.height;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+      
+      // Right eye key points
+      [RIGHT_EYE_INDICES.outer, RIGHT_EYE_INDICES.inner, RIGHT_EYE_INDICES.top1,
+       RIGHT_EYE_INDICES.bottom1, RIGHT_EYE_INDICES.top2, RIGHT_EYE_INDICES.bottom2].forEach(index => {
+        const point = landmarks[index];
+        if (point) {
+          const x = point.x * overlay.width;
+          const y = point.y * overlay.height;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+      
+      ctx.restore();
+    }
+
+    // Eye status UI
+    function setEyeStatus(leftOpen, rightOpen) {
+      leftEyeStatus.className = 'eye' + (leftOpen ? '' : ' closed');
+      rightEyeStatus.className = 'eye' + (rightOpen ? '' : ' closed');
+      leftEyeStatus.textContent = leftOpen ? '👁️' : '😴';
+      rightEyeStatus.textContent = rightOpen ? '👁️' : '😴';
+    }
+
+    function showGameOver(timeElapsed) {
+      const seconds = Math.floor(timeElapsed / 1000);
+      winnerEl.textContent = `You blinked! Lasted ${seconds} seconds 🫣`;
+      winnerEl.style.display = 'block';
+      
+      if (seconds > bestTime) {
+        bestTime = seconds;
+        bestScoreEl.textContent = `Best: ${bestTime}s`;
+        winnerEl.textContent += ` 🏆 NEW RECORD!`;
+      }
+    }
+
+    function hideGameOver() {
+      winnerEl.style.display = 'none';
+    }
+
+    function resetGame() {
+      isGameActive = false;
+      gameStartTime = null;
+      bothEyesClosedStart = null;
+      hideGameOver();
+      setEyeStatus(true, true);
+      scoreEl.textContent = 'Time: 0s';
+      startBtn.textContent = 'Start';
+    }
+
+    function startGame() {
+      isGameActive = true;
+      gameStartTime = Date.now();
+      bothEyesClosedStart = null;
+      hideGameOver();
+      setEyeStatus(true, true);
+      startBtn.textContent = 'Playing...';
+      updateTimer();
+    }
+
+    function processBlink(leftEAR, rightEAR, timestamp) {
+      // FIXED: More sensitive threshold and shorter duration
+      const BLINK_THRESHOLD = 0.20; // Lower = more sensitive
+      const BLINK_DURATION_MS = 80; // Even shorter duration for quicker detection
+      
+      const leftClosed = leftEAR < BLINK_THRESHOLD;
+      const rightClosed = rightEAR < BLINK_THRESHOLD;
+      const bothClosed = leftClosed && rightClosed;
+      
+      // Show debug info with more detail
+      debug.textContent = `EAR: L=${leftEAR.toFixed(3)} R=${rightEAR.toFixed(3)} | Closed: L=${leftClosed} R=${rightClosed} | Both: ${bothClosed} | Threshold: ${BLINK_THRESHOLD}`;
+      
+      setEyeStatus(!leftClosed, !rightClosed);
+      
+      if (!isGameActive) return;
+      
+      // FIXED: Better blink detection logic
+      if (bothClosed) {
+        if (!bothEyesClosedStart) {
+          bothEyesClosedStart = timestamp;
+          console.log('Both eyes closed, starting timer...');
+        } else if (timestamp - bothEyesClosedStart >= BLINK_DURATION_MS) {
+          // Both eyes have been closed long enough - this is a blink!
+          console.log(`BLINK DETECTED! Eyes closed for ${timestamp - bothEyesClosedStart}ms`);
+          isGameActive = false;
+          const timeElapsed = Date.now() - gameStartTime;
+          showGameOver(timeElapsed);
+          startBtn.textContent = 'Start';
+        }
+      } else {
+        // At least one eye is open - reset the blink timer
+        if (bothEyesClosedStart) {
+          console.log('Eyes opened, resetting blink timer');
+          bothEyesClosedStart = null;
+        }
+      }
+    }
+
+    function isFaceCentered(landmarks) {
+      // Use nose tip and eye positions to estimate centering
+      if (!landmarks) return false;
+      const nose = landmarks[1]; // Nose tip
+      const leftEye = landmarks[LEFT_EYE_INDICES.outer];
+      const rightEye = landmarks[RIGHT_EYE_INDICES.outer];
+      if (!nose || !leftEye || !rightEye) return false;
+      // Check if nose is roughly centered horizontally
+      const noseX = nose.x;
+      if (noseX < 0.35 || noseX > 0.65) return false;
+      // Check if eyes are not too close to top/bottom
+      const leftY = leftEye.y;
+      const rightY = rightEye.y;
+      if (leftY < 0.18 || leftY > 0.82 || rightY < 0.18 || rightY > 0.82) return false;
+      return true;
+    }
+
+    function showGuide(msg) {
+      if (guideEl) {
+        guideEl.textContent = msg;
+        guideEl.style.display = 'block';
+      }
+    }
+    function hideGuide() {
+      if (guideEl) {
+        guideEl.textContent = '';
+        guideEl.style.display = 'none';
+      }
+    }
+
+    function onResults(results) {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        drawFaceLandmarks(landmarks);
+        
+        if (!isFaceCentered(landmarks)) {
+          showGuide('Please center your face in the camera for best detection.');
+        } else {
+          hideGuide();
+        }
+        const leftEAR = getEAR(landmarks, LEFT_EYE_INDICES);
+        const rightEAR = getEAR(landmarks, RIGHT_EYE_INDICES);
+        processBlink(leftEAR, rightEAR, performance.now());
+      } else {
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        setEyeStatus(true, true);
+        debug.textContent = 'No face detected';
+        showGuide('Make sure your face is visible and centered in the camera.');
+      }
+    }
+
+    // Button events
+    startBtn.onclick = () => {
+      if (!isGameActive) {
+        startGame();
+      }
+    };
+
+    resetBtn.onclick = () => {
+      resetGame();
+    };
+
+    // Init
+    function init() {
+      resetGame();
+      loading.textContent = 'Loading MediaPipe and Camera...';
+      setupFaceMesh();
+      setupCamera();
+      setTimeout(() => {
+        loading.textContent = 'Ready! Click Start to play.';
+      }, 2000);
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

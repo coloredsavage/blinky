@@ -8,6 +8,8 @@ Camera access prompt: Requests camera permission before starting the game.
 Face centering guide: Prompts you to center your face for best detection.
 Simple UI: Monospace fonts, black background, and no distractions.
 Score tracking: See your current and best times.
+
+
 How to Play
 Grant camera access when prompted.
 Center your face in the camera until the guide disappears.
@@ -18,7 +20,7 @@ Tech
 JavaScript
 MediaPipe FaceMesh (via CDN)
 HTML5 Canvas
+
+
 Credits
 DraftOne, 2025
-
-Let me know if you want to add installation, contribution, or other sections!

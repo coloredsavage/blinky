@@ -758,7 +758,7 @@ function drawEyesCrop(landmarks) {
 
     // PeerJS logic
     function setupPeerHost() {
-peer = new Peer(roomId, { host: 'peerjs-server.herokuapp.com', port: 443, path: '/', secure: true });
+peer = new Peer(roomId, { host: 'peerjs.com', port: 443, path: '/', secure: true });
       peer.on('open', function(id) {
         // Wait for connection
         peer.on('connection', function(connection) {
@@ -772,7 +772,7 @@ peer = new Peer(roomId, { host: 'peerjs-server.herokuapp.com', port: 443, path: 
       });
     }
     function setupPeerJoin() {
-peer = new Peer({ host: 'peerjs-server.herokuapp.com', port: 443, path: '/', secure: true });
+peer = new Peer({ host: 'peerjs.com', port: 443, path: '/', secure: true });
       peer.on('open', function(id) {
         conn = peer.connect(roomId);
         conn.on('open', function() {

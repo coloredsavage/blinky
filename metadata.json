@@ -1,0 +1,7 @@
+{
+  "name": "Blinky: The Web Staring Contest",
+  "description": "A web-based real-time video game that challenges players to a classic staring contest. Using a webcam and facial landmark detection, the app determines when a player blinks. Playable in single-player against the clock or in multiplayer against friends.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

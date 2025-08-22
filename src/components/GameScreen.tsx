@@ -51,7 +51,23 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       lastBlinkWinner
     } = usePeerConnection(username);
 
-    const bothEyesClosedStart = useRef<number | null>(null);
+    // Debug remote stream
+    useEffect(() => {
+        console.log('Remote stream state:', { 
+            hasRemoteStream: !!remoteStream, 
+            streamId: remoteStream?.id,
+            tracks: remoteStream?.getTracks().length || 0,
+            opponent: opponent?.username 
+        });
+    }, [remoteStream, opponent]);
+
+    // Ensure remote video gets the stream
+    useEffect(() => {
+        if (remoteStream && remoteVideoRef.current) {
+            console.log('Setting remote stream to video element');
+            remoteVideoRef.current.srcObject = remoteStream;
+        }
+    }, [remoteStream]);
 
     const handleCameraReady = useCallback(() => {
         setIsCameraReady(true);

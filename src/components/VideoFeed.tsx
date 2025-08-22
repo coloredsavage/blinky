@@ -20,7 +20,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ videoRef, canvasRef, username, is
     // Local feed: hidden video for processing, visible canvas for cropped/styled output
     if (canvasRef) {
         return (
-            <div className="bg-black rounded-lg overflow-hidden border-2 border-gray-800 shadow-lg relative aspect-[4/3]">
+            <div className="bg-black rounded-lg overflow-hidden border-2 border-gray-800 shadow-lg relative aspect-[16/9]">
                 <video
                     ref={videoRef}
                     autoPlay
@@ -41,7 +41,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ videoRef, canvasRef, username, is
 
     // Remote feed: just a visible video element
     return (
-        <div className="bg-black rounded-lg overflow-hidden border-2 border-gray-800 shadow-lg relative aspect-[4/3]">
+        <div className="bg-black rounded-lg overflow-hidden border-2 border-gray-800 shadow-lg relative aspect-[16/9]">
             <video
                 ref={videoRef}
                 autoPlay

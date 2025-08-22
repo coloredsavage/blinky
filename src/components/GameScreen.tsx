@@ -25,7 +25,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const [isMyReady, setIsMyReady] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const canvasRef = useRef<HTMLCanvasCanvas>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
     
@@ -212,7 +212,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     };
 
     const renderScore = () => (
-        <div className="flex gap-4 text-lg">
+        <div className="flex gap-4 text-lg mb-4">
             <div className="bg-black bg-opacity-50 px-4 py-2 rounded-md">
                 Time: {(score / 1000).toFixed(2)}s
             </div>
@@ -221,6 +221,41 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     Best: {(bestScore / 1000).toFixed(2)}s
                 </div>
             )}
+        </div>
+    );
+    
+    const renderMangaEyePanel = (
+        username: string, 
+        leftEyeOpen: boolean, 
+        rightEyeOpen: boolean, 
+        isPlayer: boolean = true
+    ) => (
+        <div className="manga-eye-panel">
+            <div className="flex flex-col items-center space-y-2">
+                <div className="text-sm font-bold text-gray-300 mb-1">
+                    {username}
+                </div>
+                
+                {/* Left Eye */}
+                <div className="manga-eye-container">
+                    <div className={`manga-eye ${leftEyeOpen ? 'eye-open' : 'eye-closed'} ${isPlayer ? 'player-eye' : 'opponent-eye'}`}>
+                        <div className="eye-content">
+                            {leftEyeOpen ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                        </div>
+                    </div>
+                    <div className="eye-label">L</div>
+                </div>
+                
+                {/* Right Eye */}
+                <div className="manga-eye-container">
+                    <div className={`manga-eye ${rightEyeOpen ? 'eye-open' : 'eye-closed'} ${isPlayer ? 'player-eye' : 'opponent-eye'}`}>
+                        <div className="eye-content">
+                            {rightEyeOpen ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                        </div>
+                    </div>
+                    <div className="eye-label">R</div>
+                </div>
+            </div>
         </div>
     );
     
@@ -265,46 +300,52 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             
             <CameraPermissionModal isOpen={needsPermission} onRequest={requestCamera} />
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <VideoFeed 
-                    videoRef={videoRef} 
-                    canvasRef={canvasRef} 
-                    username={username} 
-                    isMuted={true} 
-                />
+            <div className="manga-video-container mb-4">
+                <div className="manga-video-feed">
+                    <div className="video-crop-wrapper">
+                        <VideoFeed 
+                            videoRef={videoRef} 
+                            canvasRef={canvasRef} 
+                            username={username} 
+                            isMuted={true} 
+                        />
+                    </div>
+                </div>
                 {mode === GameMode.Multiplayer && (
-                    <VideoFeed 
-                        videoRef={remoteVideoRef} 
-                        username={opponent?.username || 'Opponent'} 
-                        isMuted={false} 
-                        remoteStream={remoteStream} 
-                    />
+                    <div className="manga-video-feed">
+                        <div className="video-crop-wrapper">
+                            <VideoFeed 
+                                videoRef={remoteVideoRef} 
+                                username={opponent?.username || 'Opponent'} 
+                                isMuted={false} 
+                                remoteStream={remoteStream} 
+                            />
+                        </div>
+                    </div>
                 )}
             </div>
 
             <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg">
-                <div className="flex justify-around items-center mb-4">
-                    <div className="flex items-center gap-2">
-                        <span className={`p-2 rounded-full ${leftEar > BLINK_THRESHOLD ? 'bg-green-500 bg-opacity-80' : 'bg-red-500 bg-opacity-80'}`}>
-                            {leftEar > BLINK_THRESHOLD ? <EyeOpenIcon /> : <EyeClosedIcon />}
-                        </span>
-                        <span className="font-bold text-lg">{username}</span>
-                        <span className={`p-2 rounded-full ${rightEar > BLINK_THRESHOLD ? 'bg-green-500 bg-opacity-80' : 'bg-red-500 bg-opacity-80'}`}>
-                            {rightEar > BLINK_THRESHOLD ? <EyeOpenIcon /> : <EyeClosedIcon />}
-                        </span>
-                    </div>
+                
+                {/* Manga-style Eye Display */}
+                <div className="manga-battle-display mb-6">
+                    {renderMangaEyePanel(
+                        username, 
+                        leftEar > BLINK_THRESHOLD, 
+                        rightEar > BLINK_THRESHOLD, 
+                        true
+                    )}
+                    
                     {mode === GameMode.Multiplayer && (
-                        <div className="flex items-center gap-2">
-                            <span className="p-2 rounded-full bg-gray-700">
-                                <EyeOpenIcon />
-                            </span>
-                            <span className="font-bold text-lg">
-                                {opponent?.username || 'Opponent'}
-                            </span>
-                            <span className="p-2 rounded-full bg-gray-700">
-                                <EyeOpenIcon />
-                            </span>
-                        </div>
+                        <>
+                            <div className="vs-divider">VS</div>
+                            {renderMangaEyePanel(
+                                opponent?.username || 'Opponent', 
+                                true, // We don't have opponent's blink data
+                                true, 
+                                false
+                            )}
+                        </>
                     )}
                 </div>
 
@@ -374,6 +415,156 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 .input-primary:focus {
                     outline: none;
                     ring: 2px solid rgb(147 51 234);
+                }
+                
+                /* Manga Video Feed Styles */
+                .manga-video-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1rem;
+                    width: 100%;
+                }
+                
+                .manga-video-feed {
+                    width: 100%;
+                    aspect-ratio: 16 / 9;
+                    border-radius: 1rem;
+                    overflow: hidden;
+                    border: 3px solid rgba(147, 51, 234, 0.5);
+                    box-shadow: 0 8px 32px rgba(147, 51, 234, 0.2);
+                    background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(31, 31, 31, 0.6));
+                    position: relative;
+                }
+                
+                .manga-video-feed video {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                    object-position: center 65% !important;
+                    transform: translateY(-20%);
+                }
+                
+                .manga-video-feed canvas {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                }
+                
+                @media (min-width: 1024px) {
+                    .manga-video-feed {
+                        aspect-ratio: 21 / 9;
+                    }
+                }
+                
+                /* Manga Eye Styles */
+                .manga-battle-display {
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    gap: 2rem;
+                    flex-wrap: wrap;
+                }
+                
+                .manga-eye-panel {
+                    background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(31, 31, 31, 0.6));
+                    border: 2px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 1rem;
+                    padding: 1.5rem 1rem;
+                    backdrop-filter: blur(10px);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                }
+                
+                .manga-eye-container {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.75rem;
+                }
+                
+                .manga-eye {
+                    width: 60px;
+                    height: 40px;
+                    border-radius: 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.3s ease;
+                    position: relative;
+                    overflow: hidden;
+                    border: 3px solid;
+                }
+                
+                .manga-eye.eye-open.player-eye {
+                    background: linear-gradient(45deg, rgba(34, 197, 94, 0.8), rgba(22, 163, 74, 0.9));
+                    border-color: rgb(34, 197, 94);
+                    box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+                    animation: eyePulse 2s ease-in-out infinite;
+                }
+                
+                .manga-eye.eye-closed.player-eye {
+                    background: linear-gradient(45deg, rgba(239, 68, 68, 0.8), rgba(220, 38, 38, 0.9));
+                    border-color: rgb(239, 68, 68);
+                    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+                    height: 15px;
+                    animation: eyeBlink 0.5s ease-in-out;
+                }
+                
+                .manga-eye.opponent-eye {
+                    background: linear-gradient(45deg, rgba(107, 114, 128, 0.8), rgba(75, 85, 99, 0.9));
+                    border-color: rgb(107, 114, 128);
+                    box-shadow: 0 0 15px rgba(107, 114, 128, 0.3);
+                }
+                
+                .eye-content {
+                    font-size: 1.25rem;
+                    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
+                }
+                
+                .eye-label {
+                    font-size: 0.75rem;
+                    font-weight: bold;
+                    color: rgba(255, 255, 255, 0.7);
+                    text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+                }
+                
+                .vs-divider {
+                    font-size: 1.5rem;
+                    font-weight: bold;
+                    color: rgb(147, 51, 234);
+                    text-shadow: 0 0 10px rgba(147, 51, 234, 0.5);
+                    display: flex;
+                    align-items: center;
+                    animation: vsGlow 2s ease-in-out infinite alternate;
+                }
+                
+                @keyframes eyePulse {
+                    0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.4); }
+                    50% { box-shadow: 0 0 30px rgba(34, 197, 94, 0.8); }
+                }
+                
+                @keyframes eyeBlink {
+                    0% { height: 40px; }
+                    100% { height: 15px; }
+                }
+                
+                @keyframes vsGlow {
+                    0% { text-shadow: 0 0 10px rgba(147, 51, 234, 0.5); }
+                    100% { text-shadow: 0 0 20px rgba(147, 51, 234, 1); }
+                }
+                
+                @media (max-width: 768px) {
+                    .manga-battle-display {
+                        flex-direction: column;
+                        gap: 1rem;
+                    }
+                    
+                    .vs-divider {
+                        transform: rotate(90deg);
+                        margin: 0.5rem 0;
+                    }
                 }
             `}</style>
         </div>

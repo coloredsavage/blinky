@@ -49,13 +49,54 @@ const getEyesBoundingBox = (landmarks: any[]) => {
   return { minX, maxX, minY, maxY };
 };
 
+const analyzeLightingQuality = (videoElement: HTMLVideoElement): 'good' | 'poor' => {
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 'good';
+    
+    canvas.width = 100;
+    canvas.height = 100;
+    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+    
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    let totalBrightness = 0;
+    let totalPixels = 0;
+    
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const brightness = (r * 0.299 + g * 0.587 + b * 0.114);
+      totalBrightness += brightness;
+      totalPixels++;
+    }
+    
+    const averageBrightness = totalBrightness / totalPixels;
+    
+    // Consider lighting poor if average brightness is below 60 or above 240
+    if (averageBrightness < 60 || averageBrightness > 240) {
+      return 'poor';
+    }
+    
+    return 'good';
+  } catch (error) {
+    console.warn('Failed to analyze lighting quality:', error);
+    return 'good';
+  }
+};
+
 const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject<HTMLCanvasElement>) => {
     const [isReady, setIsReady] = useState(false);
     const [leftEar, setLeftEar] = useState(0.4);
     const [rightEar, setRightEar] = useState(0.4);
     const [isFaceCentered, setIsFaceCentered] = useState(false);
+    const [lightingQuality, setLightingQuality] = useState<'good' | 'poor'>('good');
     const faceMeshRef = useRef<any>(null);
     const cameraRef = useRef<any>(null);
+    const lightingCheckRef = useRef<NodeJS.Timeout | null>(null);
 
     const onResults = useCallback((results: any) => {
         if (!canvasRef.current || !videoRef.current) return;
@@ -102,12 +143,28 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
     const startFaceMesh = useCallback(() => {
         if (faceMeshRef.current && cameraRef.current) {
             cameraRef.current.start();
+            
+            // Start periodic lighting quality checks
+            if (lightingCheckRef.current) {
+                clearInterval(lightingCheckRef.current);
+            }
+            
+            lightingCheckRef.current = setInterval(() => {
+                if (videoRef.current && videoRef.current.readyState === 4) {
+                    const quality = analyzeLightingQuality(videoRef.current);
+                    setLightingQuality(quality);
+                }
+            }, 2000); // Check every 2 seconds
         }
     }, []);
 
     const stopFaceMesh = useCallback(() => {
         if (cameraRef.current) {
             cameraRef.current.stop();
+        }
+        if (lightingCheckRef.current) {
+            clearInterval(lightingCheckRef.current);
+            lightingCheckRef.current = null;
         }
     }, []);
     
@@ -143,7 +200,7 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
         };
     }, [onResults, videoRef, stopFaceMesh]);
 
-    return { isReady, leftEar, rightEar, isFaceCentered, startFaceMesh, stopFaceMesh };
+    return { isReady, leftEar, rightEar, isFaceCentered, lightingQuality, startFaceMesh, stopFaceMesh };
 };
 
 export default useFaceMesh;

@@ -1,16 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { GameMode } from '../types';
 
+interface AnonymousSession {
+    id: string;
+    username: string;
+    gamesPlayed: number;
+    totalTime: number;
+    bestScore: number;
+}
+
 interface WelcomeScreenProps {
-    onStartGame: (mode: GameMode, username: string, roomId?: string, isCreating?: boolean) => void;
+    onStartGame: (mode: GameMode, username?: string, roomId?: string, isCreating?: boolean) => void;
     isJoiningViaUrl: boolean;
     roomToJoin: string | null;
+    session: AnonymousSession | null;
 }
 
 const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ 
     onStartGame, 
     isJoiningViaUrl, 
-    roomToJoin 
+    roomToJoin,
+    session 
 }) => {
     const [showMultiplayerSetup, setShowMultiplayerSetup] = useState(false);
     const [username, setUsername] = useState('');
@@ -44,8 +54,8 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     };
 
     const handleSinglePlayerStart = () => {
-        // For single player, we can use a default username or ask for one
-        const playerName = username.trim() || 'Player';
+        // Use custom username if provided, otherwise use session username, or anonymous
+        const playerName = username.trim() || session?.username;
         onStartGame(GameMode.SinglePlayer, playerName);
     };
 
@@ -57,7 +67,17 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     const handleCreateRoom = () => {
         if (!validateUsername(username)) return;
         
-        const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+        // Generate a truly unique ID using crypto.randomUUID
+        let newRoomId;
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            newRoomId = crypto.randomUUID().substring(0, 8).toUpperCase();
+        } else {
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(2, 6);
+            newRoomId = `${timestamp.toString(36).slice(-4).toUpperCase()}${random.toUpperCase()}`;
+        }
+        
+        console.log('🏠 WelcomeScreen creating room with ID:', newRoomId);
         setCreatedRoomId(newRoomId);
         setError('');
     };
@@ -126,11 +146,24 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 <>
                     <h2 className="text-3xl font-bold mb-6 text-purple-300">Choose Your Challenge</h2>
                     
-                    {/* Username input for single player */}
+                    {/* Show session stats if available */}
+                    {session && (
+                        <div className="mb-6 bg-gray-800 bg-opacity-50 rounded-lg p-4">
+                            <div className="text-sm text-gray-300 mb-2">
+                                Welcome back, <span className="text-purple-400 font-bold">{session.username}</span>!
+                            </div>
+                            <div className="flex justify-center gap-4 text-xs text-gray-400">
+                                <span>Games: {session.gamesPlayed}</span>
+                                <span>Best: {(session.bestScore / 1000).toFixed(1)}s</span>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Optional username override */}
                     <div className="mb-6">
                         <input
                             type="text"
-                            placeholder="Enter your username (optional for single player)"
+                            placeholder={session ? `Playing as ${session.username} (or enter new name)` : "Enter your username (optional)"}
                             value={username}
                             onChange={handleUsernameChange}
                             className="input-primary mb-2"

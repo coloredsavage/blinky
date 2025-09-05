@@ -4,9 +4,22 @@ import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
 import usePeerConnection from '../hooks/usePeerConnection';
+import useDistractions from '../hooks/useDistractions';
+import useSession from '../hooks/useSession';
 import CameraPermissionModal from './CameraPermissionModal';
+import DistractionOverlay from './DistractionOverlay';
+import EmailCaptureModal from './EmailCaptureModal';
 import { EyeOpenIcon, EyeClosedIcon } from './icons/EyeIcons';
 import { BLINK_THRESHOLD, BLINK_DURATION_MS } from '../constants';
+import useEmailCapture from '../hooks/useEmailCapture';
+
+interface AnonymousSession {
+    id: string;
+    username: string;
+    gamesPlayed: number;
+    totalTime: number;
+    bestScore: number;
+}
 
 interface GameScreenProps {
     mode: GameMode;
@@ -14,29 +27,34 @@ interface GameScreenProps {
     roomId: string | null;
     onExit: () => void;
     isHost: boolean;
+    session: AnonymousSession | null;
 }
 
-const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost }) => {
+const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost, session }) => {
     const [gameStatus, setGameStatus] = useState(GameStatus.Idle);
     const [winner, setWinner] = useState<string | null>(null);
     const [countdown, setCountdown] = useState(3);
     const [isCameraReady, setIsCameraReady] = useState(false);
     const [needsPermission, setNeedsPermission] = useState(false);
     const [isMyReady, setIsMyReady] = useState(false);
+    const [gameStartTime, setGameStartTime] = useState<number | null>(null);
 
     const videoRef = useRef<HTMLVideoElement>(null);
-    const canvasRef = useRef<HTMLCanvasCanvas>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const bothEyesClosedStart = useRef<number | null>(null);
     
     const { bestScore, setBestScore } = useBestScore();
     const [score, setScore] = useState(0);
+    const { session: currentSession, updateSessionStats } = useSession();
 
     const { 
         isReady: faceMeshReady, 
         leftEar, 
         rightEar, 
         isFaceCentered, 
+        lightingQuality,
         startFaceMesh, 
     } = useFaceMesh(videoRef, canvasRef);
     
@@ -48,24 +66,45 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       joinRoom,
       sendData,
       isOpponentReady,
-      lastBlinkWinner
+      lastBlinkWinner,
+      connectionError,
+      connectionStatus
     } = usePeerConnection(username);
 
-    // Debug remote stream
-    useEffect(() => {
-        console.log('Remote stream state:', { 
-            hasRemoteStream: !!remoteStream, 
-            streamId: remoteStream?.id,
-            tracks: remoteStream?.getTracks().length || 0,
-            opponent: opponent?.username 
-        });
-    }, [remoteStream, opponent]);
+    // Initialize distraction system
+    const {
+        activeDistractions,
+        removeDistraction,
+        triggerTestDistraction,
+        triggerLightDistraction,
+        triggerMediumDistraction,
+        triggerHeavyDistraction
+    } = useDistractions(gameStartTime, gameStatus === GameStatus.Playing);
+    
+    // Initialize email capture system
+    const {
+        shouldShowEmailModal,
+        emailTrigger,
+        hasSubmittedEmail,
+        submitEmail,
+        dismissEmailModal,
+        triggerEmailModal
+    } = useEmailCapture(currentSession || session, score, gameStatus);
+    
+    console.log('🎮 GameScreen render - Game status:', gameStatus, 'GameStatus.GameOver:', GameStatus.GameOver, 'Start time:', gameStartTime, 'Active distractions:', activeDistractions.length);
 
     // Ensure remote video gets the stream
     useEffect(() => {
         if (remoteStream && remoteVideoRef.current) {
             console.log('Setting remote stream to video element');
             remoteVideoRef.current.srcObject = remoteStream;
+            
+            remoteVideoRef.current.onloadedmetadata = () => {
+                console.log('Remote video metadata loaded');
+                remoteVideoRef.current?.play().catch(err => {
+                    console.error('Error playing remote video:', err);
+                });
+            };
         }
     }, [remoteStream]);
 
@@ -76,7 +115,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
     const requestCamera = useCallback(() => {
         setNeedsPermission(false);
-        navigator.mediaDevices.getUserMedia({ video: true })
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            } 
+        })
             .then(stream => {
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
@@ -107,16 +152,20 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if (lastBlinkWinner) {
             setGameStatus(GameStatus.GameOver);
             setWinner(lastBlinkWinner);
+            const gameTime = Date.now() - (gameStartTime || 0);
+            const didWin = lastBlinkWinner.includes('Win');
+            console.log('🎮 Multiplayer game ended! Duration:', gameTime, 'Won:', didWin);
+            updateSessionStats(gameTime, didWin);
         }
-    }, [lastBlinkWinner]);
+    }, [lastBlinkWinner, gameStartTime, updateSessionStats]);
 
     const resetGame = useCallback(() => {
         setGameStatus(GameStatus.Idle);
         setScore(0);
         setWinner(null);
+        setGameStartTime(null);
         bothEyesClosedStart.current = null;
         
-        // Clear any existing countdown interval
         if (countdownIntervalRef.current) {
             clearInterval(countdownIntervalRef.current);
             countdownIntervalRef.current = null;
@@ -145,6 +194,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         countdownIntervalRef.current = null;
                     }
                     setGameStatus(GameStatus.Playing);
+                    const startTime = Date.now();
+                    setGameStartTime(startTime); // Start distraction timer
+                    console.log('🎮 Game started! Start time:', startTime);
                     return 0;
                 }
                 return prev - 1;
@@ -152,7 +204,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }, 1000);
     }, []);
 
-    // Cleanup countdown interval on unmount
     useEffect(() => {
         return () => {
             if (countdownIntervalRef.current) {
@@ -161,7 +212,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         };
     }, []);
 
-    // Start game logic - score tracking
     useEffect(() => {
         if (gameStatus === GameStatus.Playing) {
             const startTime = Date.now();
@@ -172,14 +222,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }
     }, [gameStatus]);
     
-    // Auto-start for multiplayer
     useEffect(() => {
         if (mode === GameMode.Multiplayer && isMyReady && isOpponentReady && gameStatus === GameStatus.Idle) {
             startCountdown();
         }
     }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown]);
 
-    // Blink detection logic
     useEffect(() => {
         if (gameStatus !== GameStatus.Playing || !faceMeshReady) return;
 
@@ -191,34 +239,50 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 bothEyesClosedStart.current = Date.now();
             } else if (Date.now() - bothEyesClosedStart.current > BLINK_DURATION_MS) {
                 setGameStatus(GameStatus.GameOver);
+                const gameTime = Date.now() - (gameStartTime || 0);
+                console.log('🎮 Game ended! Duration:', gameTime, 'Session:', session);
+                
                 if (mode === GameMode.Multiplayer) {
                     sendData({ type: 'BLINK' });
                     setWinner('You Lose!');
+                    updateSessionStats(gameTime, false);
                 } else {
                     setWinner('You blinked!');
                     if (score > bestScore) {
                         setBestScore(score);
                     }
+                    updateSessionStats(gameTime, true);
                 }
             }
         } else {
             bothEyesClosedStart.current = null;
         }
-    }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, setBestScore]);
+    }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, setBestScore, gameStartTime, session, updateSessionStats]);
     
     const getStatusMessage = (): string => {
         if (!isCameraReady) return "Waiting for camera access...\nPlease grant permission to play.";
         if (!faceMeshReady) return "Loading Face Detection Model...";
+        
+        if (lightingQuality === 'poor') {
+            return "⚠️ Poor lighting detected!\nPlease improve lighting for better accuracy.";
+        }
         
         if (gameStatus !== GameStatus.Playing && gameStatus !== GameStatus.Countdown) {
             if (!isFaceCentered) return "Please center your face in the frame.";
         }
 
         if (mode === GameMode.Multiplayer) {
-            if (!connection) return isHost ? `Waiting for opponent to join...` : `Connecting to room...`;
+            if (connectionError) return `Connection Error:\n${connectionError}`;
+            if (!connection) {
+                if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) {
+                    return `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`;
+                }
+                return isHost ? `Waiting for opponent...\nRoom: ${roomId}` : `Connecting to room: ${roomId}`;
+            }
+            if (!opponent) return "Establishing connection...";
             if (gameStatus === GameStatus.Idle) {
                 if (!isMyReady) return "Click 'Ready' to start";
-                if (!isOpponentReady) return "Waiting for opponent...";
+                if (!isOpponentReady) return `Waiting for ${opponent.username}...`;
             }
         }
         
@@ -227,14 +291,24 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         return "Ready to play!";
     };
 
+    const formatTime = (ms: number) => {
+        const seconds = ms / 1000;
+        if (seconds >= 60) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+        return `${seconds.toFixed(2)}s`;
+    };
+
     const renderScore = () => (
         <div className="flex gap-4 text-lg mb-4">
             <div className="bg-black bg-opacity-50 px-4 py-2 rounded-md">
-                Time: {(score / 1000).toFixed(2)}s
+                Time: {formatTime(score)}
             </div>
             {mode === GameMode.SinglePlayer && (
                 <div className="bg-black bg-opacity-50 px-4 py-2 rounded-md">
-                    Best: {(bestScore / 1000).toFixed(2)}s
+                    Best: {formatTime(bestScore)}
                 </div>
             )}
         </div>
@@ -252,7 +326,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     {username}
                 </div>
                 
-                {/* Left Eye */}
                 <div className="manga-eye-container">
                     <div className={`manga-eye ${leftEyeOpen ? 'eye-open' : 'eye-closed'} ${isPlayer ? 'player-eye' : 'opponent-eye'}`}>
                         <div className="eye-content">
@@ -262,7 +335,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     <div className="eye-label">L</div>
                 </div>
                 
-                {/* Right Eye */}
                 <div className="manga-eye-container">
                     <div className={`manga-eye ${rightEyeOpen ? 'eye-open' : 'eye-closed'} ${isPlayer ? 'player-eye' : 'opponent-eye'}`}>
                         <div className="eye-content">
@@ -288,7 +360,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 <button 
                     className="btn-primary" 
                     onClick={startCountdown} 
-                    disabled={!faceMeshReady || !isFaceCentered}
+                    disabled={!faceMeshReady || !isFaceCentered || lightingQuality === 'poor'}
                 >
                     Start Game
                 </button>
@@ -296,16 +368,62 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }
         if (mode === GameMode.Multiplayer && gameStatus === GameStatus.Idle) {
             return (
-                <button 
-                    className="btn-primary" 
-                    onClick={handleReadyClick} 
-                    disabled={isMyReady || !connection || !isFaceCentered}
-                >
-                    Ready
-                </button>
+                <div className="space-y-2">
+                    <button 
+                        className="btn-primary" 
+                        onClick={handleReadyClick} 
+                        disabled={isMyReady || !connection || !opponent || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
+                    >
+                        {isMyReady ? 'Ready ✓' : 'Ready'}
+                    </button>
+                    {connectionError && (
+                        <button 
+                            className="btn-secondary text-sm" 
+                            onClick={() => {
+                                if (isHost && roomId) {
+                                    createRoom(roomId);
+                                } else if (roomId) {
+                                    joinRoom(roomId);
+                                }
+                            }}
+                        >
+                            Retry Connection
+                        </button>
+                    )}
+                </div>
             );
         }
         return null;
+    };
+
+    const renderConnectionStatus = () => {
+        if (mode === GameMode.SinglePlayer) return null;
+        
+        const getStatusColor = () => {
+            if (connection && opponent) return 'bg-green-500';
+            if (connectionError) return 'bg-red-500';
+            if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) return 'bg-yellow-500';
+            return 'bg-gray-500';
+        };
+        
+        return (
+            <div className="mb-4 text-sm">
+                <div className="flex items-center justify-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
+                    <span className="text-gray-400">
+                        {connection && opponent 
+                            ? `Connected to ${opponent.username}` 
+                            : connectionStatus
+                        }
+                    </span>
+                </div>
+                {roomId && (
+                    <div className="text-gray-500 text-xs mt-1">
+                        Room: {roomId}
+                    </div>
+                )}
+            </div>
+        );
     };
     
     return (
@@ -315,6 +433,19 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             </button>
             
             <CameraPermissionModal isOpen={needsPermission} onRequest={requestCamera} />
+            
+            <EmailCaptureModal
+                isOpen={shouldShowEmailModal}
+                onSubmit={submitEmail}
+                onDismiss={dismissEmailModal}
+                trigger={emailTrigger || 'score'}
+                stats={{
+                    bestScore: session?.bestScore || 0,
+                    gamesPlayed: session?.gamesPlayed || 0,
+                    totalTime: session?.totalTime || 0
+                }}
+                currentUsername={username}
+            />
             
             <div className="manga-video-container mb-4">
                 <div className="manga-video-feed">
@@ -332,7 +463,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         <div className="video-crop-wrapper">
                             <VideoFeed 
                                 videoRef={remoteVideoRef} 
-                                username={opponent?.username || 'Opponent'} 
+                                username={opponent?.username || 'Waiting...'} 
                                 isMuted={false} 
                                 remoteStream={remoteStream} 
                             />
@@ -341,9 +472,20 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 )}
             </div>
 
-            <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg">
+            <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg relative">
                 
-                {/* Manga-style Eye Display */}
+                {/* Multiple Distraction Overlays */}
+                {activeDistractions.map(distraction => (
+                    <DistractionOverlay
+                        key={distraction.id}
+                        isActive={true}
+                        distraction={distraction}
+                        onComplete={() => removeDistraction(distraction.id)}
+                    />
+                ))}
+                
+                {renderConnectionStatus()}
+                
                 <div className="manga-battle-display mb-6">
                     {renderMangaEyePanel(
                         username, 
@@ -357,7 +499,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                             <div className="vs-divider">VS</div>
                             {renderMangaEyePanel(
                                 opponent?.username || 'Opponent', 
-                                true, // We don't have opponent's blink data
+                                true,
                                 true, 
                                 false
                             )}
@@ -375,7 +517,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         <div className="text-3xl font-bold text-yellow-400">{winner}</div>
                     )}
                     {(gameStatus === GameStatus.Idle || gameStatus === GameStatus.Playing) && winner === null && (
-                        <div className="text-xl text-gray-400 whitespace-pre-line">
+                        <div className="text-xl text-gray-400 whitespace-pre-line text-center">
                             {getStatusMessage()}
                         </div>
                     )}
@@ -384,8 +526,72 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 <div className="flex justify-center gap-4">
                     {renderControls()}
                 </div>
+                
+                {/* Debug buttons for testing */}
+                <div className="flex justify-center gap-2 mt-4 flex-wrap">
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={triggerLightDistraction}
+                    >
+                        2 Ads
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={triggerMediumDistraction}
+                    >
+                        6 Ads
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={triggerHeavyDistraction}
+                    >
+                        15 Ads
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={() => {
+                            console.log('🧹 Clearing all distractions');
+                            // Clear via removeDistraction to avoid direct state access
+                            activeDistractions.forEach(d => removeDistraction(d.id));
+                        }}
+                    >
+                        Clear All
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={() => {
+                            console.log('🔧 Testing email modal trigger');
+                            console.log('📊 Current session:', session);
+                            if (session) {
+                                // Force update session stats for testing
+                                updateSessionStats(35000, true);
+                            }
+                        }}
+                    >
+                        Test Email
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={() => {
+                            console.log('🔧 Testing email modal trigger');
+                            triggerEmailModal('games');
+                        }}
+                    >
+                        Test Email2
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={() => {
+                            console.log('🧪 Manual test distraction trigger - using triggerTestDistraction');
+                            triggerTestDistraction();
+                        }}
+                    >
+                        Manual Test
+                    </button>
+                </div>
             </div>
 
+            {/* All your existing styles remain the same */}
             <style>{`
                 .btn-primary { 
                     background-color: rgb(147 51 234);
@@ -420,20 +626,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 .btn-secondary:hover { 
                     background-color: rgb(55 65 81);
                 }
-                .input-primary { 
-                    background-color: rgba(0, 0, 0, 0.5);
-                    border: 1px solid rgb(55 65 81);
-                    border-radius: 0.5rem;
-                    padding: 0.5rem 1rem;
-                    color: white;
-                    width: 100%;
-                }
-                .input-primary:focus {
-                    outline: none;
-                    ring: 2px solid rgb(147 51 234);
-                }
                 
-                /* Manga Video Feed Styles */
+                /* All your existing manga styles stay the same */
                 .manga-video-container {
                     display: flex;
                     flex-direction: column;
@@ -475,7 +669,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     }
                 }
                 
-                /* Manga Eye Styles */
                 .manga-battle-display {
                     display: flex;
                     justify-content: center;

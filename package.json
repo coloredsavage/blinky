@@ -16,11 +16,13 @@
   "dependencies": {
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "peerjs": "^1.5.5",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/peerjs": "^0.0.30",
     "@vitejs/plugin-react": "^5.0.1",
     "typescript": "~5.8.2",
     "vite": "^6.3.5"

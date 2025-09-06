@@ -24,6 +24,7 @@
     "@types/node": "^22.14.0",
     "@types/peerjs": "^0.0.30",
     "@vitejs/plugin-react": "^5.0.1",
+    "playwright": "^1.55.0",
     "typescript": "~5.8.2",
     "vite": "^6.3.5"
   }

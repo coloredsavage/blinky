@@ -1,26 +1,19 @@
-Blinky by DraftOne 👀
-A minimal, fast, and focused browser-based blinking contest game powered by MediaPipe FaceMesh.
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-Features
-Eye-only display: Crops and scales the camera feed to show only your eyes in a long, rectangular view for maximum focus.
-Blink detection: Uses precise eye aspect ratio (EAR) calculations for accurate blink detection.
-Camera access prompt: Requests camera permission before starting the game.
-Face centering guide: Prompts you to center your face for best detection.
-Simple UI: Monospace fonts, black background, and no distractions.
-Score tracking: See your current and best times.
+# Run and deploy your AI Studio ap
 
 
-How to Play
-Grant camera access when prompted.
-Center your face in the camera until the guide disappears.
-Click Start and keep both eyes open as long as possible.
-If you blink (both eyes closed for ≥80ms), you lose.
-Try to beat your best time!
-Tech
-JavaScript
-MediaPipe FaceMesh (via CDN)
-HTML5 Canvas
 
 
-Credits
-DraftOne, 2025
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

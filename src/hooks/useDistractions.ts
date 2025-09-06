@@ -260,7 +260,7 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
       const selected = allContent[Math.floor(Math.random() * allContent.length)];
       const distraction = {
         ...selected,
-        id: `light_${baseTime}_${i}`,
+        id: selected.id?.startsWith('gif_') ? `${selected.id}_light_${baseTime}_${i}` : `light_${baseTime}_${i}`,
         duration: 2000
       };
       newDistractions.push(distraction);
@@ -290,7 +290,7 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
       const selected = allContent[Math.floor(Math.random() * allContent.length)];
       const distraction = {
         ...selected,
-        id: `medium_${baseTime}_${i}`,
+        id: selected.id?.startsWith('gif_') ? `${selected.id}_medium_${baseTime}_${i}` : `medium_${baseTime}_${i}`,
         duration: 3000
       };
       newDistractions.push(distraction);
@@ -320,7 +320,7 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
       const selected = allContent[Math.floor(Math.random() * allContent.length)];
       const distraction = {
         ...selected,
-        id: `heavy_${baseTime}_${i}`,
+        id: selected.id?.startsWith('gif_') ? `${selected.id}_heavy_${baseTime}_${i}` : `heavy_${baseTime}_${i}`,
         duration: 4000
       };
       newDistractions.push(distraction);

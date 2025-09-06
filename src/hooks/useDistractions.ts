@@ -46,8 +46,8 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
     if (schedule.current.length === 0) {
       const newSchedule: DistractionSchedule[] = [];
       
-      // Start at 10 seconds, escalate every 30 seconds
-      let currentTime = 10000; // 10 seconds
+      // Start at 20 seconds, escalate every 15 seconds
+      let currentTime = 20000; // 20 seconds - first distraction
       let difficulty = 1;
       
       // Generate distractions for first 10 minutes (typical game duration)
@@ -57,12 +57,14 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
           difficulty: Math.min(difficulty, 10)
         });
         
-        currentTime += 30000; // Every 30 seconds
+        // Progressive escalation - shorter intervals as difficulty increases
+        const intervalReduction = Math.min(difficulty * 2000, 10000); // Max 10s reduction
+        currentTime += Math.max(15000 - intervalReduction, 3000); // Min 3s between distractions
         difficulty += 1; // Increase difficulty
       }
       
       schedule.current = newSchedule;
-      console.log('📅 Generated distraction schedule:', newSchedule);
+      console.log('📅 Generated distraction schedule (starts at 20s):', newSchedule);
     }
   }, []);
 
@@ -71,13 +73,70 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
     setActiveDistractions(prev => prev.filter(d => d.id !== distractionId));
   }, []);
 
-  // Load sponsor content when game starts (skip API for now, use local images only)
+  // Clear all distractions
+  const clearAllDistractions = useCallback(() => {
+    console.log('🧹 Clearing all distractions');
+    setActiveDistractions([]);
+  }, []);
+
+  // Fetch GIFs from Tenor API
+  const fetchWebGifs = useCallback(async () => {
+    try {
+      const TENOR_API_KEY = 'AIzaSyAY0bwEO-dTO6Yilmm_9HMgjrj4swmffOo';
+      const distractionKeywords = [
+        'funny cat', 'dancing', 'explosion', 'sparkles', 
+        'neon', 'rainbow', 'glitch', 'hypnotic', 'spinning',
+        'flash', 'disco', 'party', 'wow', 'amazing'
+      ];
+      
+      const randomKeyword = distractionKeywords[Math.floor(Math.random() * distractionKeywords.length)];
+      console.log('🎬 Fetching GIFs for keyword:', randomKeyword);
+      
+      const response = await fetch(
+        `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(randomKeyword)}&key=${TENOR_API_KEY}&client_key=blinky_game&limit=10&media_filter=gif&contentfilter=medium`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🎬 Tenor API response:', data);
+        
+        const gifContent: DistractionContent[] = data.results.map((gif: any, index: number) => ({
+          id: `gif_${gif.id}`,
+          type: 'image' as const,
+          imageUrl: gif.media_formats.gif.url || gif.media_formats.tinygif.url,
+          content: '', // Remove the title - just use empty string
+          duration: 3000 + (index * 500), // Vary duration 3-8 seconds
+          intensity: Math.ceil((index + 1) / 2), // Intensity 1-5
+          sponsorName: 'Powered by Tenor'
+        }));
+        
+        console.log('🎬 Generated GIF content with IDs:', gifContent.map(g => g.id));
+        
+        console.log('✅ Loaded GIFs from web:', gifContent.length);
+        setAvailableContent(gifContent);
+      } else {
+        console.warn('⚠️ Failed to fetch GIFs from Tenor:', response.status);
+        setAvailableContent([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching GIFs:', error);
+      setAvailableContent([]);
+    }
+  }, []);
+
+  // Load sponsor content when game starts - now includes web GIFs
   useEffect(() => {
     if (isGameActive && gameStartTime) {
-      console.log('🎮 Game started, using local images only');
-      setAvailableContent([]); // Don't fetch from API for now
+      console.log('🎮 Game started, fetching web GIFs...');
+      fetchWebGifs();
     }
-  }, [isGameActive, gameStartTime]);
+  }, [isGameActive, gameStartTime, fetchWebGifs]);
+
+  // Also fetch GIFs on component mount for test buttons
+  useEffect(() => {
+    console.log('🎬 Component mounted, pre-fetching GIFs for test buttons...');
+    fetchWebGifs();
+  }, [fetchWebGifs]);
 
   // Main effect - manages distraction scheduling
   useEffect(() => {
@@ -185,100 +244,99 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
 
   const triggerLightDistraction = useCallback(() => {
     console.log('🚀 Light distraction triggered!');
-    console.log('📦 Available content:', [...localImages, ...distractionLibrary]);
+    console.log('📦 Available content:', [...localImages, ...availableContent, ...distractionLibrary]);
     
-    // Trigger 2 distractions
-    for (let i = 0; i < 2; i++) {
-      setTimeout(() => {
-        const allContent = [...localImages, ...distractionLibrary];
-        console.log(`📦 Creating distraction ${i + 1}/2, available content:`, allContent.length);
-        if (allContent.length > 0) {
-          const selected = allContent[Math.floor(Math.random() * allContent.length)];
-          const distraction = {
-            ...selected,
-            id: `light_${Date.now()}_${i}`,
-            duration: 2000
-          };
-          
-          console.log('🎯 Adding light distraction:', distraction);
-          setActiveDistractions(prev => {
-            console.log('Previous active distractions:', prev.length);
-            const newList = [...prev, distraction];
-            console.log('New active distractions:', newList.length);
-            return newList;
-          });
-          setTimeout(() => {
-            removeDistraction(distraction.id);
-          }, distraction.duration);
-        } else {
-          console.warn('❌ No content available for light distraction');
-        }
-      }, i * 500);
+    const allContent = [...localImages, ...availableContent, ...distractionLibrary];
+    if (allContent.length === 0) {
+      console.warn('❌ No content available for light distraction');
+      return;
     }
-  }, [localImages, removeDistraction]);
+
+    // Generate all distractions at once to avoid timing issues
+    const baseTime = Date.now();
+    const newDistractions = [];
+    
+    for (let i = 0; i < 2; i++) {
+      const selected = allContent[Math.floor(Math.random() * allContent.length)];
+      const distraction = {
+        ...selected,
+        id: `light_${baseTime}_${i}`,
+        duration: 2000
+      };
+      newDistractions.push(distraction);
+    }
+    
+    console.log('🎯 Adding light distractions:', newDistractions);
+    setActiveDistractions(prev => [...prev, ...newDistractions]);
+    
+    // No automatic removal - let them stick until manually closed
+  }, [localImages, availableContent, removeDistraction]);
 
   const triggerMediumDistraction = useCallback(() => {
     console.log('🚀 Medium distraction triggered!');
-    console.log('📦 Available content:', [...localImages, ...distractionLibrary]);
+    console.log('📦 Available content:', [...localImages, ...availableContent, ...distractionLibrary]);
     
-    // Trigger 6 distractions
-    for (let i = 0; i < 6; i++) {
-      setTimeout(() => {
-        const allContent = [...localImages, ...distractionLibrary];
-        console.log(`📦 Creating distraction ${i + 1}/6, available content:`, allContent.length);
-        if (allContent.length > 0) {
-          const selected = allContent[Math.floor(Math.random() * allContent.length)];
-          const distraction = {
-            ...selected,
-            id: `medium_${Date.now()}_${i}`,
-            duration: 3000
-          };
-          
-          console.log('🎯 Adding medium distraction:', distraction);
-          setActiveDistractions(prev => [...prev, distraction]);
-          setTimeout(() => {
-            removeDistraction(distraction.id);
-          }, distraction.duration);
-        } else {
-          console.warn('❌ No content available for medium distraction');
-        }
-      }, i * 300);
+    const allContent = [...localImages, ...availableContent, ...distractionLibrary];
+    if (allContent.length === 0) {
+      console.warn('❌ No content available for medium distraction');
+      return;
     }
-  }, [localImages, removeDistraction]);
+
+    // Generate all distractions at once to avoid timing issues
+    const baseTime = Date.now();
+    const newDistractions = [];
+    
+    for (let i = 0; i < 6; i++) {
+      const selected = allContent[Math.floor(Math.random() * allContent.length)];
+      const distraction = {
+        ...selected,
+        id: `medium_${baseTime}_${i}`,
+        duration: 3000
+      };
+      newDistractions.push(distraction);
+    }
+    
+    console.log('🎯 Adding medium distractions:', newDistractions);
+    setActiveDistractions(prev => [...prev, ...newDistractions]);
+    
+    // No automatic removal - let them stick until manually closed
+  }, [localImages, availableContent, removeDistraction]);
 
   const triggerHeavyDistraction = useCallback(() => {
     console.log('🚀 Heavy distraction triggered!');
-    console.log('📦 Available content:', [...localImages, ...distractionLibrary]);
+    console.log('📦 Available content:', [...localImages, ...availableContent, ...distractionLibrary]);
     
-    // Trigger 15 distractions
-    for (let i = 0; i < 15; i++) {
-      setTimeout(() => {
-        const allContent = [...localImages, ...distractionLibrary];
-        console.log(`📦 Creating distraction ${i + 1}/15, available content:`, allContent.length);
-        if (allContent.length > 0) {
-          const selected = allContent[Math.floor(Math.random() * allContent.length)];
-          const distraction = {
-            ...selected,
-            id: `heavy_${Date.now()}_${i}`,
-            duration: 4000
-          };
-          
-          console.log('🎯 Adding heavy distraction:', distraction);
-          setActiveDistractions(prev => [...prev, distraction]);
-          setTimeout(() => {
-            removeDistraction(distraction.id);
-          }, distraction.duration);
-        } else {
-          console.warn('❌ No content available for heavy distraction');
-        }
-      }, i * 200);
+    const allContent = [...localImages, ...availableContent, ...distractionLibrary];
+    if (allContent.length === 0) {
+      console.warn('❌ No content available for heavy distraction');
+      return;
     }
-  }, [localImages, removeDistraction]);
+
+    // Generate all distractions at once to avoid timing issues
+    const baseTime = Date.now();
+    const newDistractions = [];
+    
+    for (let i = 0; i < 15; i++) {
+      const selected = allContent[Math.floor(Math.random() * allContent.length)];
+      const distraction = {
+        ...selected,
+        id: `heavy_${baseTime}_${i}`,
+        duration: 4000
+      };
+      newDistractions.push(distraction);
+    }
+    
+    console.log('🎯 Adding heavy distractions:', newDistractions);
+    setActiveDistractions(prev => [...prev, ...newDistractions]);
+    
+    // No automatic removal - let them stick until manually closed
+  }, [localImages, availableContent, removeDistraction]);
 
   return {
     activeDistractions,
     nextDistractionTime,
     removeDistraction,
+    clearAllDistractions,
     triggerTestDistraction,
     triggerLightDistraction,
     triggerMediumDistraction,

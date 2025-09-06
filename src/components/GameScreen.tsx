@@ -75,6 +75,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const {
         activeDistractions,
         removeDistraction,
+        clearAllDistractions,
         triggerTestDistraction,
         triggerLightDistraction,
         triggerMediumDistraction,
@@ -474,15 +475,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
             <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg relative">
                 
-                {/* Multiple Distraction Overlays */}
-                {activeDistractions.map(distraction => (
-                    <DistractionOverlay
-                        key={distraction.id}
-                        isActive={true}
-                        distraction={distraction}
-                        onComplete={() => removeDistraction(distraction.id)}
-                    />
-                ))}
+                {/* Single Distraction Overlay handling multiple distractions */}
+                <DistractionOverlay
+                    isActive={activeDistractions.length > 0}
+                    distractions={activeDistractions}
+                    onComplete={(id: string) => removeDistraction(id)}
+                />
                 
                 {renderConnectionStatus()}
                 
@@ -549,11 +547,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     </button>
                     <button 
                         className="btn-secondary text-xs px-2 py-1"
-                        onClick={() => {
-                            console.log('🧹 Clearing all distractions');
-                            // Clear via removeDistraction to avoid direct state access
-                            activeDistractions.forEach(d => removeDistraction(d.id));
-                        }}
+                        onClick={clearAllDistractions}
                     >
                         Clear All
                     </button>

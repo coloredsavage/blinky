@@ -54,11 +54,11 @@ const useLocalSponsorImages = () => {
         intensity: 4,
         content: 'Your Advertisement 4'
       },
-      // Add test images that are guaranteed to work
+      // Add test images that work without internet
       {
         id: 'test_0',
         type: 'image',
-        imageUrl: 'https://via.placeholder.com/300x200/ff6b6b/white?text=AD+1',
+        imageUrl: '', // No image, use fallback
         sponsorName: 'Test Sponsor A',
         duration: 2000,
         intensity: 1,
@@ -67,7 +67,7 @@ const useLocalSponsorImages = () => {
       {
         id: 'test_1',
         type: 'image',
-        imageUrl: 'https://via.placeholder.com/300x200/4ecdc4/white?text=AD+2',
+        imageUrl: '', // No image, use fallback  
         sponsorName: 'Test Sponsor B',
         duration: 2500,
         intensity: 2,

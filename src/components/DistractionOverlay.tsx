@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 interface DistractionContent {
   id: string;
@@ -12,125 +12,345 @@ interface DistractionContent {
 
 interface DistractionOverlayProps {
   isActive: boolean;
-  distraction: DistractionContent | null;
-  onComplete: () => void;
+  distractions: DistractionContent[];
+  onComplete: (id: string) => void;
 }
 
 const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
   isActive,
-  distraction,
+  distractions,
   onComplete
 }) => {
-  const [animationPhase, setAnimationPhase] = useState<'enter' | 'active' | 'exit'>('enter');
+  const [distractionStates, setDistractionStates] = useState<Record<string, 'enter' | 'active' | 'exit'>>({});
+  const distractionPositions = useRef<Record<string, any>>({});
+  const [closableAfter, setClosableAfter] = useState<Record<string, boolean>>({});
+  const [dragStates, setDragStates] = useState<Record<string, {isDragging: boolean, offset: {x: number, y: number}}>>({});
   
-  // Simplify: if we have a distraction and it's active, show it
-  const shouldShow = isActive && distraction;
+  // Handle close button click
+  const handleCloseClick = useCallback((distractionId: string) => {
+    if (closableAfter[distractionId]) {
+      onComplete(distractionId);
+    }
+  }, [closableAfter, onComplete]);
 
-  useEffect(() => {
-    if (shouldShow) {
-      setAnimationPhase('enter');
-      
-      // Enter animation duration
-      const enterTimer = setTimeout(() => {
-        setAnimationPhase('active');
-      }, 300);
+  const handleMouseDown = useCallback((e: React.MouseEvent, distractionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Get the popup element itself, not just any parent
+    const popup = e.currentTarget.closest('.retro-popup') as HTMLElement;
+    if (!popup) return;
 
-      // Total duration timer
-      const durationTimer = setTimeout(() => {
-        setAnimationPhase('exit');
+    // Add dragging class to disable transitions
+    popup.classList.add('dragging');
+
+    // Get the popup's current computed position (not bounding rect)
+    const computedStyle = window.getComputedStyle(popup);
+    const currentLeft = parseInt(computedStyle.left) || 0;
+    const currentTop = parseInt(computedStyle.top) || 0;
+    
+    // Calculate offset from mouse to the popup's current position
+    const offset = {
+      x: e.clientX - currentLeft,
+      y: e.clientY - currentTop
+    };
+
+
+    setDragStates(prev => ({
+      ...prev,
+      [distractionId]: { isDragging: true, offset }
+    }));
+  }, []);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    Object.entries(dragStates).forEach(([distractionId, dragState]) => {
+      if (dragState.isDragging) {
+        // Calculate new position by subtracting the stored offset
+        const newLeft = e.clientX - dragState.offset.x;
+        const newTop = e.clientY - dragState.offset.y;
         
-        // Exit animation duration
-        setTimeout(() => {
-          onComplete();
-        }, 300);
-      }, distraction!.duration);
+        const newPosition = {
+          left: `${newLeft}px`,
+          top: `${newTop}px`,
+          right: 'auto',
+          bottom: 'auto'
+        };
+        
+        // Update the position for React state
+        distractionPositions.current[distractionId] = newPosition;
+        
+        // Direct DOM manipulation for smooth dragging (like native OS windows)
+        const popupElement = document.querySelector(`[data-distraction-id="${distractionId}"]`) as HTMLElement;
+        if (popupElement) {
+          popupElement.style.left = `${newLeft}px`;
+          popupElement.style.top = `${newTop}px`;
+          popupElement.style.right = 'auto';
+          popupElement.style.bottom = 'auto';
+        }
+      }
+    });
+  }, [dragStates]);
 
+  const handleMouseUp = useCallback(() => {
+    // Remove dragging class from all popups to re-enable transitions
+    document.querySelectorAll('.retro-popup.dragging').forEach(popup => {
+      popup.classList.remove('dragging');
+    });
+
+    setDragStates(prev => {
+      const newState = { ...prev };
+      Object.keys(newState).forEach(id => {
+        newState[id] = { ...newState[id], isDragging: false };
+      });
+      return newState;
+    });
+  }, []);
+
+  // Add global mouse events for dragging
+  useEffect(() => {
+    if (Object.values(dragStates).some(d => d.isDragging)) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
       return () => {
-        clearTimeout(enterTimer);
-        clearTimeout(durationTimer);
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
       };
     }
-  }, [shouldShow, distraction?.id, distraction?.duration, onComplete]);
+  }, [dragStates, handleMouseMove, handleMouseUp]);
+  
+  const shouldShow = isActive && distractions.length > 0;
 
-  console.log('🎬 DistractionOverlay render:', { 
-    isActive, 
-    distraction: distraction?.id, 
-    type: distraction?.type, 
-    shouldShow, 
-    animationPhase 
-  });
+  // Initialize states for new distractions - memoized to prevent infinite loops
+  useEffect(() => {
+    const newDistractions = distractions.filter(d => !distractionStates[d.id]);
+    
+    if (newDistractions.length === 0) return;
+    
+    console.log('🆕 Initializing new distractions:', newDistractions.map(d => d.id));
+    
+    newDistractions.forEach(distraction => {
+      // Set initial state
+      setDistractionStates(prev => ({
+        ...prev,
+        [distraction.id]: 'enter'
+      }));
+
+      // Enter animation
+      setTimeout(() => {
+        setDistractionStates(prev => ({
+          ...prev,
+          [distraction.id]: 'active'
+        }));
+      }, 300);
+
+      // Make closable after 5 seconds
+      setTimeout(() => {
+        setClosableAfter(prev => ({
+          ...prev,
+          [distraction.id]: true
+        }));
+      }, 5000);
+
+      // For ads (sponsor images), don't auto-remove - they stick until manually closed
+      // Only auto-remove GIFs and other temporary distractions
+      if (distraction.type !== 'image' && distraction.type !== 'sponsor') {
+        setTimeout(() => {
+          setDistractionStates(prev => ({
+            ...prev,
+            [distraction.id]: 'exit'
+          }));
+          
+          // Exit animation
+          setTimeout(() => {
+            setDistractionStates(prev => {
+              const newStates = { ...prev };
+              delete newStates[distraction.id];
+              return newStates;
+            });
+            // Clean up position and states
+            delete distractionPositions.current[distraction.id];
+            setClosableAfter(prev => {
+              const newState = { ...prev };
+              delete newState[distraction.id];
+              return newState;
+            });
+            setDragStates(prev => {
+              const newState = { ...prev };
+              delete newState[distraction.id];
+              return newState;
+            });
+            onComplete(distraction.id);
+          }, 300);
+        }, distraction.duration);
+      }
+    });
+  }, [distractions.length]); // Only depend on length to prevent constant re-runs
+
 
   if (!shouldShow) {
-    console.log('❌ Not showing distraction overlay');
     return null;
   }
 
-  console.log('✅ Showing distraction overlay:', distraction);
-  console.log('🔍 Distraction details:', {
-    id: distraction.id,
-    type: distraction.type,
-    content: distraction.content,
-    imageUrl: distraction.imageUrl,
-    sponsorName: distraction.sponsorName,
-    duration: distraction.duration,
-    intensity: distraction.intensity
-  });
-
-  // Debug: Add a simple test for manual test distractions only (not ad buttons)
-  if (distraction.id.includes('test') || distraction.id.includes('manual')) {
+  // Render test distractions differently
+  const testDistractions = distractions.filter(d => d.id.includes('test') || d.id.includes('manual'));
+  if (testDistractions.length > 0) {
     return (
       <div className="distraction-overlay">
-        <div style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'red',
-          color: 'white',
-          padding: '20px',
-          border: '5px solid yellow',
-          fontSize: '18px',
-          fontWeight: 'bold',
-          zIndex: 99999
-        }}>
-          🚨 MANUAL TEST DISTRACTION! 🚨<br />
-          ID: {distraction.id}<br />
-          Type: {distraction.type}
-        </div>
+        {testDistractions.map(distraction => (
+          <div key={distraction.id} style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            background: 'red',
+            color: 'white',
+            padding: '20px',
+            border: '5px solid yellow',
+            fontSize: '18px',
+            fontWeight: 'bold',
+            zIndex: 99999
+          }}>
+            🚨 MANUAL TEST DISTRACTION! 🚨<br />
+            ID: {distraction.id}<br />
+            Type: {distraction.type}
+          </div>
+        ))}
       </div>
     );
   }
 
   const getRandomPosition = () => {
+    // Avoid the center area where the video canvas is (roughly 40% width, 60% height in center)
     const positions = [
       { top: '5%', left: '5%' },      // Top left corner
       { top: '5%', right: '5%' },     // Top right corner  
-      { top: '30%', left: '2%' },     // Middle left edge
-      { top: '30%', right: '2%' },    // Middle right edge
+      { top: '15%', left: '2%' },     // Left edge (higher up)
+      { top: '15%', right: '2%' },    // Right edge (higher up)
       { bottom: '5%', left: '5%' },   // Bottom left corner
       { bottom: '5%', right: '5%' },  // Bottom right corner
-      { top: '2%', left: '20%' },     // Top center-left
-      { top: '2%', right: '20%' },    // Top center-right
-      { bottom: '2%', left: '25%' },  // Bottom center-left
-      { bottom: '2%', right: '25%' }, // Bottom center-right
+      { top: '2%', left: '5%' },      // Top left area
+      { top: '2%', right: '5%' },     // Top right area
+      { bottom: '2%', left: '5%' },   // Bottom left area
+      { bottom: '2%', right: '5%' },  // Bottom right area
+      // Add more edge positions to avoid center
+      { top: '50%', left: '2%' },     // Mid left edge
+      { top: '50%', right: '2%' },    // Mid right edge
     ];
     return positions[Math.floor(Math.random() * positions.length)];
   };
 
-  const renderImageDistraction = () => {
-    const position = getRandomPosition();
+
+  const renderGifPopup = (distraction: DistractionContent) => {
+    // Get or create a stable position for this distraction
+    if (!distractionPositions.current[distraction.id]) {
+      distractionPositions.current[distraction.id] = getRandomPosition();
+    }
+    const position = distractionPositions.current[distraction.id];
+    const animationPhase = distractionStates[distraction.id] || 'enter';
+    const canClose = closableAfter[distraction.id];
     
     return (
       <div 
+        key={distraction.id}
+        data-distraction-id={distraction.id}
         className={`retro-popup ${animationPhase}`}
-        style={position}
+        style={{
+          ...position,
+          cursor: dragStates[distraction.id]?.isDragging ? 'grabbing' : 'grab'
+        }}
       >
-        <div className="popup-header">
+        <div 
+          className="popup-header"
+          onMouseDown={(e) => handleMouseDown(e, distraction.id)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <div className="popup-title-bar">
+            <span className="popup-title">GIF</span>
+            <div className="popup-buttons">
+              <div 
+                className={`popup-button close ${canClose ? 'enabled' : 'disabled'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCloseClick(distraction.id);
+                }}
+                title={canClose ? 'Close' : 'Available in 5 seconds'}
+              >
+                ×
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="popup-content">
+          {distraction.imageUrl && (
+            <img 
+              src={distraction.imageUrl} 
+              alt="Animated GIF" 
+              className="gif-image"
+              onError={(e) => {
+                console.error('❌ Failed to load GIF:', distraction.imageUrl);
+                const fallbackDiv = document.createElement('div');
+                fallbackDiv.className = 'popup-image-fallback';
+                fallbackDiv.style.cssText = 'background: linear-gradient(45deg, #ff6b6b, #4ecdc4); color: white; padding: 40px; text-align: center; font-size: 18px; font-weight: bold; border-radius: 8px;';
+                fallbackDiv.innerHTML = '🎬 GIF UNAVAILABLE';
+                e.currentTarget.parentNode?.replaceChild(fallbackDiv, e.currentTarget);
+              }}
+            />
+          )}
+          <div className="popup-footer">
+            {distraction.sponsorName && (
+              <div className="sponsor-credit">
+                {distraction.sponsorName}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAdPopup = (distraction: DistractionContent) => {
+    // Get or create a stable position for this distraction
+    if (!distractionPositions.current[distraction.id]) {
+      distractionPositions.current[distraction.id] = getRandomPosition();
+    }
+    const position = distractionPositions.current[distraction.id];
+    const animationPhase = distractionStates[distraction.id] || 'enter';
+    const canClose = closableAfter[distraction.id];
+    
+    return (
+      <div 
+        key={distraction.id}
+        data-distraction-id={distraction.id}
+        className={`retro-popup ${animationPhase}`}
+        style={{
+          ...position,
+          cursor: dragStates[distraction.id]?.isDragging ? 'grabbing' : 'grab'
+        }}
+      >
+        <div 
+          className="popup-header"
+          onMouseDown={(e) => handleMouseDown(e, distraction.id)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
           <div className="popup-title-bar">
             <span className="popup-title">Advertisement</span>
             <div className="popup-buttons">
-              <div className="popup-button minimize">_</div>
-              <div className="popup-button close">×</div>
+              <div 
+                className={`popup-button close ${canClose ? 'enabled' : 'disabled'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCloseClick(distraction.id);
+                }}
+                title={canClose ? 'Close' : 'Available in 5 seconds'}
+              >
+                ×
+              </div>
             </div>
           </div>
         </div>
@@ -139,14 +359,9 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
             <img 
               src={distraction.imageUrl} 
               alt={`${distraction.sponsorName} Advertisement`} 
-              className="popup-image"
-              onLoad={() => {
-                console.log('✅ Successfully loaded image:', distraction.imageUrl);
-              }}
+              className="ad-image"
               onError={(e) => {
-                console.error('❌ Failed to load sponsor image:', distraction.imageUrl);
-                console.error('Image error details:', e);
-                // Replace with fallback text instead of hiding
+                console.error('❌ Failed to load ad image:', distraction.imageUrl);
                 const fallbackDiv = document.createElement('div');
                 fallbackDiv.className = 'popup-image-fallback';
                 fallbackDiv.style.cssText = 'background: linear-gradient(45deg, #ff6b6b, #4ecdc4); color: white; padding: 40px; text-align: center; font-size: 18px; font-weight: bold; border-radius: 8px;';
@@ -177,7 +392,7 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
               </small>
             </div>
           )}
-          {distraction.content && distraction.imageUrl && (
+          {distraction.content && (
             <div className="popup-text">{distraction.content}</div>
           )}
           <div className="popup-footer">
@@ -256,50 +471,9 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
     </div>
   );
 
-  const renderDistraction = () => {
-    switch (distraction.type) {
-      case 'image':
-        return renderImageDistraction();
-      case 'popup':
-      case 'sponsor':
-        return renderPopupDistraction();
-      case 'flash':
-        return renderFlashDistraction();
-      case 'particle':
-        return renderParticleDistraction();
-      case 'interactive':
-        return renderInteractiveDistraction();
-      default:
-        console.warn('⚠️ Unknown distraction type:', distraction.type);
-        // Fallback rendering for unknown types
-        return (
-          <div className="distraction-overlay">
-            <div style={{
-              position: 'fixed',
-              top: '20%',
-              right: '10%',
-              background: 'orange',
-              color: 'white',
-              padding: '20px',
-              border: '3px solid red',
-              borderRadius: '10px',
-              fontSize: '18px',
-              fontWeight: 'bold',
-              zIndex: 99999
-            }}>
-              🚨 FALLBACK DISTRACTION 🚨<br />
-              Type: {distraction.type}<br />
-              Content: {distraction.content || 'No content'}<br />
-              ID: {distraction.id}
-            </div>
-          </div>
-        );
-    }
-  };
-
   return (
     <div className="distraction-overlay">
-      {/* Debug indicator - always visible when overlay is active */}
+      {/* Debug indicator */}
       <div style={{
         position: 'fixed',
         bottom: '10px',
@@ -313,10 +487,45 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
         borderRadius: '5px',
         border: '2px solid black'
       }}>
-        🟢 OVERLAY ACTIVE - ID: {distraction.id}
+        🟢 OVERLAY ACTIVE - COUNT: {distractions.length}
       </div>
       
-      {renderDistraction()}
+      {/* Render all distractions */}
+      {distractions.map(distraction => {
+        // Check if it's a GIF from Tenor
+        if (distraction.id?.startsWith('gif_')) {
+          return renderGifPopup(distraction);
+        }
+        
+        // Otherwise render as ad popup
+        switch (distraction.type) {
+          case 'image':
+          case 'popup':
+          case 'sponsor':
+            return renderAdPopup(distraction);
+          default:
+            return (
+              <div key={distraction.id} style={{
+                position: 'fixed',
+                top: '20%',
+                right: '10%',
+                background: 'orange',
+                color: 'white',
+                padding: '20px',
+                border: '3px solid red',
+                borderRadius: '10px',
+                fontSize: '18px',
+                fontWeight: 'bold',
+                zIndex: 99999
+              }}>
+                🚨 FALLBACK DISTRACTION 🚨<br />
+                Type: {distraction.type}<br />
+                Content: {distraction.content || 'No content'}<br />
+                ID: {distraction.id}
+              </div>
+            );
+        }
+      })}
       
       <style>{`
         .distraction-overlay {
@@ -479,15 +688,18 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
           position: fixed;
           width: 300px;
           background: #c0c0c0;
-          border: 10px solid #ff0000 !important;
-          box-shadow: 0 0 30px rgba(255, 0, 0, 1);
+          border: 2px outset #c0c0c0;
+          box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
           font-family: 'MS Sans Serif', sans-serif;
-          font-size: 14px;
-          z-index: 99999;
-          transform: scale(1) !important; /* Force visible for debugging */
+          font-size: 11px;
+          z-index: 9999;
+          transform: scale(0);
           transition: all 0.3s ease-out;
-          /* Debug: make it super obvious */
-          background: linear-gradient(45deg, #ff6b6b, #4ecdc4) !important;
+          user-select: none;
+        }
+
+        .retro-popup.dragging {
+          transition: none !important; /* Disable transitions during drag for smooth performance */
         }
 
         .retro-popup.enter {
@@ -549,11 +761,102 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
           border: 1px inset #c0c0c0;
         }
 
+        .popup-button.disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+        }
+
+        .popup-button.enabled {
+          opacity: 1;
+          cursor: pointer;
+        }
+
+        .popup-button.enabled:hover {
+          background: #ff6b6b;
+          color: white;
+        }
+
+        .popup-header {
+          background: linear-gradient(to bottom, #0040ff, #0020aa);
+          color: white;
+          padding: 2px;
+          cursor: grab;
+          pointer-events: auto;
+          position: relative;
+          z-index: 10;
+          user-select: none;
+        }
+
+        .popup-header:active {
+          cursor: grabbing;
+        }
+
+        .popup-title-bar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 2px 4px;
+          font-weight: bold;
+          pointer-events: auto;
+          position: relative;
+          z-index: 11;
+        }
+
+        .popup-title {
+          font-size: 11px;
+        }
+
+        .popup-buttons {
+          display: flex;
+          gap: 2px;
+        }
+
+        .popup-button {
+          width: 16px;
+          height: 14px;
+          background: #c0c0c0;
+          border: 1px outset #c0c0c0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: bold;
+          cursor: pointer;
+          color: black;
+        }
+
+        .popup-button:hover {
+          background: #e0e0e0;
+        }
+
+        .popup-button:active {
+          border: 1px inset #c0c0c0;
+        }
+
         .popup-content {
           padding: 8px;
           background: #c0c0c0;
         }
 
+        .gif-image {
+          width: 100%;
+          height: auto;
+          max-height: 180px;
+          object-fit: cover;
+          border: 1px inset #c0c0c0;
+          margin-bottom: 6px;
+        }
+
+        .ad-image {
+          width: 100%;
+          height: auto;
+          max-height: 180px;
+          object-fit: cover;
+          border: 1px inset #c0c0c0;
+          margin-bottom: 6px;
+        }
+
+        /* Legacy class for backwards compatibility */
         .popup-image {
           width: 100%;
           height: auto;

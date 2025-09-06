@@ -220,23 +220,42 @@ const DistractionOverlay: React.FC<DistractionOverlayProps> = ({
   }
 
   const getRandomPosition = () => {
-    // Avoid the center area where the video canvas is (roughly 40% width, 60% height in center)
-    const positions = [
-      { top: '5%', left: '5%' },      // Top left corner
-      { top: '5%', right: '5%' },     // Top right corner  
-      { top: '15%', left: '2%' },     // Left edge (higher up)
-      { top: '15%', right: '2%' },    // Right edge (higher up)
-      { bottom: '5%', left: '5%' },   // Bottom left corner
-      { bottom: '5%', right: '5%' },  // Bottom right corner
-      { top: '2%', left: '5%' },      // Top left area
-      { top: '2%', right: '5%' },     // Top right area
-      { bottom: '2%', left: '5%' },   // Bottom left area
-      { bottom: '2%', right: '5%' },  // Bottom right area
-      // Add more edge positions to avoid center
-      { top: '50%', left: '2%' },     // Mid left edge
-      { top: '50%', right: '2%' },    // Mid right edge
-    ];
-    return positions[Math.floor(Math.random() * positions.length)];
+    // Generate random positions avoiding center video area (roughly 30-70% width, 20-80% height)
+    const avoidCenterWidth = Math.random() < 0.5;
+    const avoidCenterHeight = Math.random() < 0.5;
+    
+    let left: string | undefined;
+    let right: string | undefined;
+    let top: string | undefined;
+    let bottom: string | undefined;
+    
+    // Random horizontal position avoiding center
+    if (avoidCenterWidth) {
+      // Left side (0-25% from left)
+      left = `${Math.random() * 25}%`;
+    } else {
+      // Right side (75-95% from left, or 5-25% from right)
+      if (Math.random() < 0.5) {
+        left = `${75 + Math.random() * 20}%`;
+      } else {
+        right = `${Math.random() * 25}%`;
+      }
+    }
+    
+    // Random vertical position avoiding center video
+    if (avoidCenterHeight) {
+      // Top area (0-15% from top)
+      top = `${Math.random() * 15}%`;
+    } else {
+      // Bottom area (85-95% from top, or 5-15% from bottom)
+      if (Math.random() < 0.5) {
+        top = `${85 + Math.random() * 10}%`;
+      } else {
+        bottom = `${Math.random() * 15}%`;
+      }
+    }
+    
+    return { left, right, top, bottom };
   };
 
 

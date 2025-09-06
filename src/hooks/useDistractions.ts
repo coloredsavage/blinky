@@ -16,6 +16,17 @@ interface DistractionSchedule {
   difficulty: number; // 1-10 scale
 }
 
+// Fallback content if no local images available - moved outside component to prevent re-creation
+const distractionLibrary: DistractionContent[] = [
+  {
+    id: 'fallback1',
+    type: 'popup',
+    content: '🎮 Sample Ad - Add your images to /public/sponsors/',
+    duration: 3000,
+    intensity: 1
+  }
+];
+
 const useDistractions = (gameStartTime: number | null, isGameActive: boolean) => {
   const [activeDistractions, setActiveDistractions] = useState<DistractionContent[]>([]);
   const [nextDistractionTime, setNextDistractionTime] = useState<number | null>(null);
@@ -26,17 +37,6 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
   
   // Get local sponsor images
   const localImages = useLocalSponsorImages();
-
-  // Fallback content if no local images available
-  const distractionLibrary: DistractionContent[] = [
-    {
-      id: 'fallback1',
-      type: 'popup',
-      content: '🎮 Sample Ad - Add your images to /public/sponsors/',
-      duration: 3000,
-      intensity: 1
-    }
-  ];
 
   // Game timing refs
   const adScheduleRef = useRef<NodeJS.Timeout[]>([]);
@@ -208,7 +208,7 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
       adScheduleRef.current = [];
       gifScheduleRef.current = [];
     };
-  }, [isGameActive, gameStartTime, localImages, availableContent, distractionLibrary]);
+  }, [isGameActive, gameStartTime, localImages, availableContent]);
 
   // Manual trigger functions for debug
   const triggerTestDistraction = useCallback(() => {

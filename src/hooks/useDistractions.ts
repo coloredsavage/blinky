@@ -38,35 +38,9 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
     }
   ];
 
-  // Generate distraction schedule - memoized to prevent recreating
-  const schedule = useRef<DistractionSchedule[]>([]);
-  
-  useEffect(() => {
-    // Only generate once
-    if (schedule.current.length === 0) {
-      const newSchedule: DistractionSchedule[] = [];
-      
-      // Start at 20 seconds, escalate every 15 seconds
-      let currentTime = 20000; // 20 seconds - first distraction
-      let difficulty = 1;
-      
-      // Generate distractions for first 10 minutes (typical game duration)
-      while (currentTime < 600000) {
-        newSchedule.push({
-          gameTime: currentTime,
-          difficulty: Math.min(difficulty, 10)
-        });
-        
-        // Progressive escalation - shorter intervals as difficulty increases
-        const intervalReduction = Math.min(difficulty * 2000, 10000); // Max 10s reduction
-        currentTime += Math.max(15000 - intervalReduction, 3000); // Min 3s between distractions
-        difficulty += 1; // Increase difficulty
-      }
-      
-      schedule.current = newSchedule;
-      console.log('📅 Generated distraction schedule (starts at 20s):', newSchedule);
-    }
-  }, []);
+  // Game timing refs
+  const adScheduleRef = useRef<NodeJS.Timeout[]>([]);
+  const gifScheduleRef = useRef<NodeJS.Timeout[]>([]);
 
   // Handle manual distraction removal
   const removeDistraction = useCallback((distractionId: string) => {
@@ -138,93 +112,103 @@ const useDistractions = (gameStartTime: number | null, isGameActive: boolean) =>
     fetchWebGifs();
   }, [fetchWebGifs]);
 
-  // Main effect - manages distraction scheduling
+  // Main effect - implements new game mechanics
   useEffect(() => {
     if (!isGameActive || !gameStartTime) {
-      // Clear all timeouts when game is not active
-      if (distractionTimeoutRef.current) {
-        clearTimeout(distractionTimeoutRef.current);
-        distractionTimeoutRef.current = null;
-      }
-      if (gameTimeRef.current) {
-        clearTimeout(gameTimeRef.current);
-        gameTimeRef.current = null;
-      }
+      // Clear all scheduled distractions
+      adScheduleRef.current.forEach(timeout => clearTimeout(timeout));
+      gifScheduleRef.current.forEach(timeout => clearTimeout(timeout));
+      adScheduleRef.current = [];
+      gifScheduleRef.current = [];
       setActiveDistractions([]);
       setNextDistractionTime(null);
       return;
     }
 
-    console.log('🎮 Starting distraction system with', localImages.length, 'local images');
-    console.log('📊 Local images:', localImages);
+    console.log('🎮 Starting new distraction mechanics: 2 ads at 20s, then 1 every 5s. GIFs random.');
     
-    // Start monitoring game time
-    const updateGameTime = () => {
-      const currentGameTime = Date.now() - gameStartTime;
-      const nextDistraction = schedule.current.find(d => d.gameTime > currentGameTime);
+    const adContent = [...localImages, ...distractionLibrary]; // Ads only
+    const gifContent = availableContent; // GIFs only
+    
+    // Schedule first 2 ads at 20 seconds
+    const firstAdTimeout = setTimeout(() => {
+      console.log('🚀 Adding first 2 ads at 20 seconds');
+      for (let i = 0; i < 2; i++) {
+        if (adContent.length > 0) {
+          const selected = adContent[Math.floor(Math.random() * adContent.length)];
+          const adDistraction = {
+            ...selected,
+            id: `game_ad_${Date.now()}_${i}`,
+            type: 'sponsor' as const // Ensure it's treated as ad
+          };
+          
+          setActiveDistractions(prev => [...prev, adDistraction]);
+        }
+      }
       
-      if (nextDistraction) {
-        const timeUntilNext = nextDistraction.gameTime - currentGameTime;
-        setNextDistractionTime(nextDistraction.gameTime);
-        
-        if (distractionTimeoutRef.current) {
-          clearTimeout(distractionTimeoutRef.current);
+      // Schedule recurring ads every 5 seconds after the initial 2
+      const recurringAdInterval = setInterval(() => {
+        console.log('🚀 Adding recurring ad');
+        if (adContent.length > 0) {
+          const selected = adContent[Math.floor(Math.random() * adContent.length)];
+          const adDistraction = {
+            ...selected,
+            id: `game_ad_${Date.now()}_recurring`,
+            type: 'sponsor' as const
+          };
+          
+          setActiveDistractions(prev => [...prev, adDistraction]);
+        }
+      }, 5000);
+      
+      adScheduleRef.current.push(recurringAdInterval as any);
+    }, 20000);
+    
+    adScheduleRef.current.push(firstAdTimeout);
+    
+    // Schedule random GIFs - come and go at random intervals
+    const scheduleRandomGif = () => {
+      const randomDelay = Math.random() * 10000 + 5000; // 5-15 seconds random
+      const gifTimeout = setTimeout(() => {
+        if (gifContent.length > 0) {
+          const selected = gifContent[Math.floor(Math.random() * gifContent.length)];
+          const gifDistraction = {
+            ...selected,
+            id: `${selected.id}_${Date.now()}`, // Preserve gif_ prefix
+            duration: 3000 + Math.random() * 4000 // 3-7 second duration
+          };
+          
+          console.log('🎬 Adding random GIF:', gifDistraction.id);
+          setActiveDistractions(prev => [...prev, gifDistraction]);
+          
+          // Auto-remove GIF after its duration
+          setTimeout(() => {
+            console.log('⏰ Removing GIF after duration:', gifDistraction.id);
+            setActiveDistractions(prev => prev.filter(d => d.id !== gifDistraction.id));
+          }, gifDistraction.duration);
         }
         
-        console.log(`⏱️ Next distraction in ${timeUntilNext}ms (difficulty: ${nextDistraction.difficulty})`);
-        
-        distractionTimeoutRef.current = setTimeout(() => {
-          console.log('🚀 Triggering distraction NOW');
-          
-          // Select from local images first
-          const allContent = [...localImages, ...availableContent, ...distractionLibrary];
-          console.log('📋 All available content:', allContent);
-          const suitableDistractions = allContent.filter(d => d.intensity <= nextDistraction.difficulty);
-          console.log('✅ Suitable distractions:', suitableDistractions);
-          
-          if (suitableDistractions.length > 0) {
-            const selected = suitableDistractions[Math.floor(Math.random() * suitableDistractions.length)];
-            const distraction = {
-              ...selected,
-              id: `${selected.id}_${Date.now()}`
-            };
-            
-            console.log('📸 Selected distraction:', distraction);
-            console.log('🎯 Setting active distractions');
-            setActiveDistractions(prev => {
-              console.log('📦 Previous distractions:', prev);
-              const newDistractions = [...prev, distraction];
-              console.log('📦 New distractions:', newDistractions);
-              return newDistractions;
-            });
-            
-            // Auto-remove after duration
-            setTimeout(() => {
-              console.log('⏰ Removing distraction after duration:', distraction.id);
-              setActiveDistractions(prev => prev.filter(d => d.id !== distraction.id));
-            }, distraction.duration);
-          } else {
-            console.warn('⚠️ No suitable distractions found!');
-          }
-        }, timeUntilNext);
-      }
+        // Schedule next random GIF
+        scheduleRandomGif();
+      }, randomDelay);
+      
+      gifScheduleRef.current.push(gifTimeout);
     };
     
-    // Initial scheduling
-    updateGameTime();
+    // Start random GIF scheduling after 25 seconds (after initial ads)
+    const startGifTimeout = setTimeout(() => {
+      scheduleRandomGif();
+    }, 25000);
     
-    // Set up periodic checks (every 10 seconds)
-    gameTimeRef.current = setInterval(updateGameTime, 10000);
+    gifScheduleRef.current.push(startGifTimeout);
 
     return () => {
-      if (distractionTimeoutRef.current) {
-        clearTimeout(distractionTimeoutRef.current);
-      }
-      if (gameTimeRef.current) {
-        clearInterval(gameTimeRef.current);
-      }
+      adScheduleRef.current.forEach(timeout => clearTimeout(timeout));
+      gifScheduleRef.current.forEach(timeout => clearTimeout(timeout));
+      adScheduleRef.current = [];
+      gifScheduleRef.current = [];
     };
-  }, [isGameActive, gameStartTime, localImages, availableContent]);
+  }, [isGameActive, gameStartTime, localImages, availableContent, distractionLibrary]);
 
   // Manual trigger functions for debug
   const triggerTestDistraction = useCallback(() => {

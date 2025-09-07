@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import WelcomeScreen from './components/WelcomeScreen';
 import GameScreen from './components/GameScreen';
+import GlobalQueueScreen from './components/GlobalQueueScreen';
 import { GameMode } from './types';
 
 const App: React.FC = () => {
@@ -9,6 +10,7 @@ const App: React.FC = () => {
     const [roomId, setRoomId] = useState<string | null>(null);
     const [isJoining, setIsJoining] = useState<boolean>(false);
     const [isHost, setIsHost] = useState<boolean>(false);
+    const [globalMatchData, setGlobalMatchData] = useState<any>(null);
 
     // Check URL for room parameter on app load
     useEffect(() => {
@@ -22,6 +24,7 @@ const App: React.FC = () => {
     }, []);
 
     const handleStartGame = (mode: GameMode, user: string, id?: string, isCreating?: boolean) => {
+        console.log('🚀 App handleStartGame called:', { mode, user, id, isCreating });
         setGameMode(mode);
         setUsername(user);
         
@@ -45,14 +48,27 @@ const App: React.FC = () => {
         setRoomId(null);
         setIsJoining(false);
         setIsHost(false);
+        setGlobalMatchData(null);
         
         // Clean up URL when exiting
         window.history.pushState({}, document.title, window.location.pathname);
     };
 
+    const handleGlobalMatchFound = (matchData: any) => {
+        console.log('🎯 App: Global match found:', matchData);
+        setGlobalMatchData(matchData);
+        setIsHost(matchData.isHost);
+        setRoomId(matchData.matchId); // Use matchId as roomId for GameScreen compatibility
+    };
+
     const renderContent = () => {
+        console.log('🎮 App renderContent - gameMode:', gameMode, 'username:', username, 'globalMatchData:', !!globalMatchData);
+        
         // Show welcome screen if no mode selected OR if multiplayer but no username yet
-        if (gameMode === GameMode.None || (gameMode === GameMode.Multiplayer && !username)) {
+        if (gameMode === GameMode.None || 
+           (gameMode === GameMode.Multiplayer && !username) ||
+           (gameMode === GameMode.Global && !username)) {
+            console.log('📋 Rendering WelcomeScreen');
             return (
                 <WelcomeScreen 
                     onStartGame={handleStartGame} 
@@ -61,15 +77,28 @@ const App: React.FC = () => {
                 />
             );
         }
+
+        // Show global queue screen if in Global mode but no match found yet
+        if (gameMode === GameMode.Global && !globalMatchData) {
+            console.log('🌍 Rendering GlobalQueueScreen');
+            return (
+                <GlobalQueueScreen 
+                    username={username} 
+                    onMatchFound={handleGlobalMatchFound} 
+                    onExit={handleExitGame} 
+                />
+            );
+        }
         
-        // Show game screen once we have mode and username
+        // Show game screen once we have mode, username, and (for global) match data
         return (
             <GameScreen 
                 mode={gameMode} 
                 username={username} 
                 roomId={roomId} 
                 onExit={handleExitGame} 
-                isHost={isHost} 
+                isHost={isHost}
+                globalMatchData={globalMatchData}
             />
         );
     };

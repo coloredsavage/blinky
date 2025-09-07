@@ -4,6 +4,7 @@ import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
 import useSimplePeer from '../hooks/useSimplePeer';
+import useGlobalMultiplayer from '../hooks/useGlobalMultiplayer';
 import useDistractions from '../hooks/useDistractions';
 import useSession from '../hooks/useSession';
 import CameraPermissionModal from './CameraPermissionModal';
@@ -27,10 +28,11 @@ interface GameScreenProps {
     roomId: string | null;
     onExit: () => void;
     isHost: boolean;
-    session: AnonymousSession | null;
+    session?: AnonymousSession | null;
+    globalMatchData?: any;
 }
 
-const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost, session }) => {
+const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost, session, globalMatchData }) => {
     const [gameStatus, setGameStatus] = useState(GameStatus.Idle);
     const [winner, setWinner] = useState<string | null>(null);
     const [countdown, setCountdown] = useState(3);
@@ -58,6 +60,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         startFaceMesh, 
     } = useFaceMesh(videoRef, canvasRef);
     
+    // Room-based multiplayer hook
     const { 
       connection,
       isConnected,
@@ -71,6 +74,17 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       connectionError,
       connectionStatus
     } = useSimplePeer(username);
+
+    // Global multiplayer hook
+    const {
+      currentMatch: globalMatch,
+      submitGameResult,
+    } = useGlobalMultiplayer();
+
+    // Determine which multiplayer system to use
+    const isGlobalMode = mode === GameMode.Global;
+    const multiplayerData = isGlobalMode ? globalMatchData : null;
+    const opponentData = isGlobalMode ? globalMatch?.opponent : opponent;
 
     // Initialize distraction system
     const {
@@ -148,12 +162,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [requestCamera]);
 
     useEffect(() => {
-        if (mode === GameMode.Multiplayer && roomId) {
+        if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && roomId) {
             if (isHost) {
-                console.log('🏠 HOST: useEffect calling createRoom for roomId:', roomId);
+                console.log(`🏠 HOST: useEffect calling createRoom for ${mode === GameMode.Global ? 'matchId' : 'roomId'}:`, roomId);
                 createRoom(roomId);
             } else {
-                console.log('👤 GUEST: useEffect calling joinRoom for roomId:', roomId);
+                console.log(`👤 GUEST: useEffect calling joinRoom for ${mode === GameMode.Global ? 'matchId' : 'roomId'}:`, roomId);
                 joinRoom(roomId);
             }
         }
@@ -186,6 +200,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             setIsMyReady(false);
             sendData({type: 'READY_STATE', payload: { isReady: false }});
         }
+        // Global mode doesn't need ready state reset as matches are automatically created
     }, [mode, sendData]);
 
     const handleReadyClick = useCallback(() => {
@@ -237,7 +252,11 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if (mode === GameMode.Multiplayer && isMyReady && isOpponentReady && gameStatus === GameStatus.Idle) {
             startCountdown();
         }
-    }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown]);
+        // Global mode will auto-start when both players are ready (handled via global multiplayer system)
+        if (mode === GameMode.Global && isMyReady && opponentData && gameStatus === GameStatus.Idle) {
+            startCountdown();
+        }
+    }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown, opponentData]);
 
     useEffect(() => {
         if (gameStatus !== GameStatus.Playing || !faceMeshReady) return;
@@ -256,6 +275,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 if (mode === GameMode.Multiplayer) {
                     sendData({ type: 'BLINK' });
                     setWinner('You Lose!');
+                    updateSessionStats(gameTime, false);
+                } else if (mode === GameMode.Global) {
+                    setWinner('You Lose!');
+                    // Submit result to global multiplayer system
+                    if (opponentData) {
+                        submitGameResult(gameTime, opponentData.username);
+                    }
                     updateSessionStats(gameTime, false);
                 } else {
                     setWinner('You blinked!');
@@ -282,18 +308,23 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             if (!isFaceCentered) return "Please center your face in the frame.";
         }
 
-        if (mode === GameMode.Multiplayer) {
+        if (mode === GameMode.Multiplayer || mode === GameMode.Global) {
             if (connectionError) return `Connection Error:\n${connectionError}`;
             if (!isConnected) {
                 if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) {
-                    return `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`;
+                    return mode === GameMode.Multiplayer 
+                        ? `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`
+                        : connectionStatus;
                 }
-                return isHost ? `Waiting for opponent...\nRoom: ${roomId}` : `Connecting to room: ${roomId}`;
+                return mode === GameMode.Multiplayer 
+                    ? (isHost ? `Waiting for opponent...\nRoom: ${roomId}` : `Connecting to room: ${roomId}`)
+                    : "Connecting to global matchmaking...";
             }
-            if (!opponent) return "Establishing connection...";
+            if (!opponentData) return "Establishing connection...";
             if (gameStatus === GameStatus.Idle) {
                 if (!isMyReady) return "Click 'Ready' to start";
-                if (!isOpponentReady) return `Waiting for ${opponent.username}...`;
+                if (mode === GameMode.Multiplayer && !isOpponentReady) return `Waiting for ${opponentData.username}...`;
+                if (mode === GameMode.Global) return `Waiting for ${opponentData.username}...`;
             }
         }
         
@@ -377,17 +408,17 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 </button>
             );
         }
-        if (mode === GameMode.Multiplayer && gameStatus === GameStatus.Idle) {
+        if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && gameStatus === GameStatus.Idle) {
             return (
                 <div className="space-y-2">
                     <button 
                         className="btn-primary" 
                         onClick={handleReadyClick} 
-                        disabled={isMyReady || !isConnected || !opponent || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
+                        disabled={isMyReady || !isConnected || !opponentData || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
                     >
                         {isMyReady ? 'Ready ✓' : 'Ready'}
                     </button>
-                    {connectionError && (
+                    {connectionError && mode === GameMode.Multiplayer && (
                         <button 
                             className="btn-secondary text-sm" 
                             onClick={() => {
@@ -411,7 +442,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if (mode === GameMode.SinglePlayer) return null;
         
         const getStatusColor = () => {
-            if (isConnected && opponent) return 'bg-green-500';
+            if (isConnected && opponentData) return 'bg-green-500';
             if (connectionError) return 'bg-red-500';
             if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying') || connectionStatus.includes('Creating') || connectionStatus.includes('Joining')) return 'bg-yellow-500';
             return 'bg-gray-500';
@@ -422,13 +453,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 <div className="flex items-center justify-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
                     <span className="text-gray-400">
-                        {isConnected && opponent 
-                            ? `Connected to ${opponent.username}` 
+                        {isConnected && opponentData 
+                            ? `Connected to ${opponentData.username}` 
                             : connectionStatus
                         }
                     </span>
                 </div>
-                {roomId && (
+                {roomId && mode === GameMode.Multiplayer && (
                     <div className="text-gray-500 text-xs mt-1">
                         Room: {roomId}
                     </div>
@@ -469,12 +500,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         />
                     </div>
                 </div>
-                {mode === GameMode.Multiplayer && (
+                {(mode === GameMode.Multiplayer || mode === GameMode.Global) && (
                     <div className="manga-video-feed">
                         <div className="video-crop-wrapper">
                             <VideoFeed 
                                 videoRef={remoteVideoRef} 
-                                username={opponent?.username || 'Waiting...'} 
+                                username={opponentData?.username || 'Waiting...'} 
                                 isMuted={false} 
                                 remoteStream={remoteStream} 
                             />
@@ -502,11 +533,11 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         true
                     )}
                     
-                    {mode === GameMode.Multiplayer && (
+                    {(mode === GameMode.Multiplayer || mode === GameMode.Global) && (
                         <>
                             <div className="vs-divider">VS</div>
                             {renderMangaEyePanel(
-                                opponent?.username || 'Opponent', 
+                                opponentData?.username || 'Opponent', 
                                 true,
                                 true, 
                                 false
@@ -693,6 +724,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     width: 100%;
                     height: 100%;
                     object-fit: cover;
+                    object-position: center 65% !important;
+                    transform: translateY(-20%) scaleX(-1);
                 }
                 
                 .manga-video-feed canvas {

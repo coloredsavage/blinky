@@ -13,7 +13,7 @@ interface WelcomeScreenProps {
     onStartGame: (mode: GameMode, username?: string, roomId?: string, isCreating?: boolean) => void;
     isJoiningViaUrl: boolean;
     roomToJoin: string | null;
-    session: AnonymousSession | null;
+    session?: AnonymousSession | null;
 }
 
 const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ 
@@ -62,6 +62,29 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     const handleMultiplayerClick = () => {
         setShowMultiplayerSetup(true);
         setError('');
+    };
+
+    const handleGlobalMultiplayerStart = () => {
+        console.log('🎯 Global multiplayer button clicked');
+        const playerName = prompt('Enter your username:');
+        console.log('📝 User entered username:', playerName);
+        
+        if (!playerName) {
+            console.log('❌ No username provided');
+            return;
+        }
+        
+        const isValid = validateUsername(playerName);
+        console.log('✅ Username validation result:', isValid);
+        
+        if (!isValid) {
+            console.log('❌ Username validation failed for:', playerName);
+            alert(`Invalid username: ${error}`);
+            return;
+        }
+        
+        console.log('🚀 Starting global game with username:', playerName.trim());
+        onStartGame(GameMode.Global, playerName.trim());
     };
     
     const handleCreateRoom = () => {
@@ -188,10 +211,10 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                             👥 Multiplayer
                         </button>
                         <button 
-                            className="btn-disabled" 
-                            disabled
+                            onClick={handleGlobalMultiplayerStart} 
+                            className="btn-tertiary"
                         >
-                            🌍 Global Stare-Down (Coming Soon)
+                            🌍 Global Stare-Down
                         </button>
                     </div>
                 </>
@@ -357,6 +380,28 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
                 }
                 .btn-secondary:disabled {
+                    background: rgb(55 65 81);
+                    cursor: not-allowed;
+                    transform: scale(1);
+                    box-shadow: none;
+                    opacity: 0.6;
+                }
+                .btn-tertiary { 
+                    background: linear-gradient(135deg, rgb(34 197 94), rgb(16 185 129));
+                    color: white;
+                    font-weight: bold;
+                    padding: 0.75rem 1.5rem;
+                    border-radius: 0.75rem;
+                    transition: all 0.3s ease;
+                    border: none;
+                    cursor: pointer;
+                    box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
+                }
+                .btn-tertiary:hover:not(:disabled) { 
+                    transform: scale(1.02);
+                    box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
+                }
+                .btn-tertiary:disabled {
                     background: rgb(55 65 81);
                     cursor: not-allowed;
                     transform: scale(1);

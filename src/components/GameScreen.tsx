@@ -3,7 +3,7 @@ import { GameMode, GameStatus } from '../types';
 import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
-import usePeerConnection from '../hooks/usePeerConnection';
+import useSimplePeer from '../hooks/useSimplePeer';
 import useDistractions from '../hooks/useDistractions';
 import useSession from '../hooks/useSession';
 import CameraPermissionModal from './CameraPermissionModal';
@@ -60,6 +60,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     
     const { 
       connection,
+      isConnected,
       remoteStream,
       opponent,
       createRoom,
@@ -69,7 +70,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       lastBlinkWinner,
       connectionError,
       connectionStatus
-    } = usePeerConnection(username);
+    } = useSimplePeer(username);
 
     // Initialize distraction system
     const {
@@ -96,16 +97,23 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
     // Ensure remote video gets the stream
     useEffect(() => {
+        console.log('🎥 Remote video effect - remoteStream:', !!remoteStream, 'remoteVideoRef:', !!remoteVideoRef.current);
         if (remoteStream && remoteVideoRef.current) {
-            console.log('Setting remote stream to video element');
+            console.log('🎥 Setting remote stream to video element:', remoteStream);
             remoteVideoRef.current.srcObject = remoteStream;
             
             remoteVideoRef.current.onloadedmetadata = () => {
-                console.log('Remote video metadata loaded');
-                remoteVideoRef.current?.play().catch(err => {
-                    console.error('Error playing remote video:', err);
+                console.log('🎥 Remote video metadata loaded, attempting to play');
+                remoteVideoRef.current?.play().then(() => {
+                    console.log('🎥 Remote video started playing successfully');
+                }).catch(err => {
+                    console.error('❌ Error playing remote video:', err);
                 });
             };
+        } else if (remoteStream && !remoteVideoRef.current) {
+            console.log('⚠️ Have remote stream but no video ref');
+        } else if (!remoteStream && remoteVideoRef.current) {
+            console.log('⚠️ Have video ref but no remote stream');
         }
     }, [remoteStream]);
 
@@ -142,12 +150,14 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     useEffect(() => {
         if (mode === GameMode.Multiplayer && roomId) {
             if (isHost) {
+                console.log('🏠 HOST: useEffect calling createRoom for roomId:', roomId);
                 createRoom(roomId);
             } else {
+                console.log('👤 GUEST: useEffect calling joinRoom for roomId:', roomId);
                 joinRoom(roomId);
             }
         }
-    }, [mode, roomId, isHost, createRoom, joinRoom]);
+    }, [mode, roomId, isHost]); // Removed createRoom, joinRoom from dependencies to prevent re-runs
     
     useEffect(() => {
         if (lastBlinkWinner) {
@@ -274,7 +284,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
         if (mode === GameMode.Multiplayer) {
             if (connectionError) return `Connection Error:\n${connectionError}`;
-            if (!connection) {
+            if (!isConnected) {
                 if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) {
                     return `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`;
                 }
@@ -373,7 +383,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     <button 
                         className="btn-primary" 
                         onClick={handleReadyClick} 
-                        disabled={isMyReady || !connection || !opponent || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
+                        disabled={isMyReady || !isConnected || !opponent || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
                     >
                         {isMyReady ? 'Ready ✓' : 'Ready'}
                     </button>
@@ -401,9 +411,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if (mode === GameMode.SinglePlayer) return null;
         
         const getStatusColor = () => {
-            if (connection && opponent) return 'bg-green-500';
+            if (isConnected && opponent) return 'bg-green-500';
             if (connectionError) return 'bg-red-500';
-            if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) return 'bg-yellow-500';
+            if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying') || connectionStatus.includes('Creating') || connectionStatus.includes('Joining')) return 'bg-yellow-500';
             return 'bg-gray-500';
         };
         
@@ -412,7 +422,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 <div className="flex items-center justify-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
                     <span className="text-gray-400">
-                        {connection && opponent 
+                        {isConnected && opponent 
                             ? `Connected to ${opponent.username}` 
                             : connectionStatus
                         }
@@ -582,6 +592,37 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     >
                         Manual Test
                     </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={() => {
+                            console.log('🔍 DEBUG INFO:');
+                            console.log('- Mode:', mode);
+                            console.log('- Room ID:', roomId);
+                            console.log('- Room ID Length:', roomId?.length);
+                            console.log('- Username:', username);
+                            console.log('- Connection Status:', connectionStatus);
+                            console.log('- Is Connected:', isConnected);
+                            console.log('- Opponent:', opponent);
+                            console.log('- Connection Error:', connectionError);
+                        }}
+                    >
+                        Debug Info
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1"
+                        onClick={async () => {
+                            try {
+                                const response = await fetch('http://localhost:3001/rooms');
+                                const data = await response.json();
+                                console.log('🏠 SERVER ROOMS:', data);
+                                console.log('🏠 Available room IDs:', data.rooms.map((r: any) => r.roomId));
+                            } catch (error) {
+                                console.error('Failed to fetch rooms:', error);
+                            }
+                        }}
+                    >
+                        Check Rooms
+                    </button>
                 </div>
             </div>
 
@@ -640,12 +681,18 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     position: relative;
                 }
                 
-                .manga-video-feed video {
+                .manga-video-feed video:not(.remote-video) {
                     width: 100%;
                     height: 100%;
                     object-fit: cover;
                     object-position: center 65% !important;
                     transform: translateY(-20%);
+                }
+                
+                .manga-video-feed video.remote-video {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
                 }
                 
                 .manga-video-feed canvas {

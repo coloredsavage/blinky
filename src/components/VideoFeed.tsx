@@ -39,7 +39,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ videoRef, canvasRef, username, is
         );
     }
 
-    // Remote feed: just a visible video element
+    // Remote feed: visible video element with proper face framing (no aggressive cropping)
     return (
         <div className="bg-black rounded-lg overflow-hidden border-2 border-gray-800 shadow-lg relative aspect-[16/9]">
             <video
@@ -47,7 +47,11 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ videoRef, canvasRef, username, is
                 autoPlay
                 playsInline
                 muted={isMuted}
-                className="absolute top-0 left-0 w-full h-full object-cover"
+                className="absolute top-0 left-0 w-full h-full object-cover remote-video"
+                style={{
+                    objectPosition: 'center center',
+                    transform: 'scaleX(-1)'
+                }}
             ></video>
              <div className="absolute bottom-2 left-2 bg-black/60 text-white text-sm px-2 py-1 rounded">
                 {username}

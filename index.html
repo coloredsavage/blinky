@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Blinky: Enhanced Staring Contest</title>
     
+    <!-- Global polyfills for Node.js compatibility -->
+    <script>
+      if (typeof global === 'undefined') {
+        window.global = window;
+      }
+      // Add process.nextTick polyfill
+      if (typeof process === 'undefined') {
+        window.process = {
+          nextTick: function(callback) {
+            setTimeout(callback, 0);
+          },
+          env: {}
+        };
+      } else if (!process.nextTick) {
+        process.nextTick = function(callback) {
+          setTimeout(callback, 0);
+        };
+      }
+    </script>
+    
     <!-- Import Map for ES Modules -->
     <script type="importmap">
 {

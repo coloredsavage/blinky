@@ -1,0 +1,321 @@
+🚀 Signaling server running on port 3001
+📡 WebSocket endpoint: ws://localhost:3001
+🔗 Health check: http://localhost:3001/health
+🏠 Rooms status: http://localhost:3001/rooms
+🔌 NEW USER CONNECTED: bHGnKYX6RrcQl9f0AAAB
+📊 Total connected users: 1
+🔌 NEW USER CONNECTED: BhvIHGd81_EycwsSAAAD
+📊 Total connected users: 2
+🏠 Creating room: EB4BB969 by TestUser
+👤 TestUser created and joined room EB4BB969
+🏠 Creating room: EB4BB969 by TestUser
+👤 TestUser already in room EB4BB969, skipping duplicate
+🔌 User disconnected: BhvIHGd81_EycwsSAAAD
+🗑️  Removed empty room: EB4BB969
+🔌 NEW USER CONNECTED: 9UlYH5igz0FfZElYAAAG
+📊 Total connected users: 2
+🏠 Creating room: 9D3232F7 by Saya
+👤 Saya created and joined room 9D3232F7
+🏠 Creating room: 9D3232F7 by Saya
+👤 Saya already in room 9D3232F7, skipping duplicate
+🔌 User disconnected: bHGnKYX6RrcQl9f0AAAB
+🔌 NEW USER CONNECTED: xgwdh4_yBfrMxzG1AAAJ
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: k4E4UEW2Lv5IQPfDAAAK
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: Dawg attempting to join room: 9D3232F7
+📊 Current rooms: [ '9D3232F7' ]
+📊 Room data: { roomId: '9D3232F7', username: 'Dawg' }
+🏠 Found room: Yes (1 users)
+✅ Dawg successfully added to room 9D3232F7
+👥 Room users now: [
+  { socketId: '9UlYH5igz0FfZElYAAAG', username: 'Saya' },
+  { socketId: 'k4E4UEW2Lv5IQPfDAAAK', username: 'Dawg' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 Dawg joined room 9D3232F7 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: '9UlYH5igz0FfZElYAAAG', username: 'Saya' }
+📤 Telling 9UlYH5igz0FfZElYAAAG to create peer connection to k4E4UEW2Lv5IQPfDAAAK
+🚪 RECEIVED join-room event: Dawg attempting to join room: 9D3232F7
+📊 Current rooms: [ '9D3232F7' ]
+📊 Room data: { roomId: '9D3232F7', username: 'Dawg' }
+🏠 Found room: Yes (2 users)
+👤 Dawg is already in room 9D3232F7, skipping duplicate join
+🔌 User disconnected: k4E4UEW2Lv5IQPfDAAAK
+🔌 User disconnected: 9UlYH5igz0FfZElYAAAG
+🗑️  Removed empty room: 9D3232F7
+🔌 NEW USER CONNECTED: Ml6kYyvyaNPJdXXUAAAM
+📊 Total connected users: 2
+🔌 User disconnected: Ml6kYyvyaNPJdXXUAAAM
+🔌 User disconnected: xgwdh4_yBfrMxzG1AAAJ
+🔌 NEW USER CONNECTED: iAhhSaEgtUdcYiBrAAAP
+📊 Total connected users: 1
+🏠 Creating room: 2C1367F9 by Yau
+👤 Yau created and joined room 2C1367F9
+🏠 Creating room: 2C1367F9 by Yau
+👤 Yau already in room 2C1367F9, skipping duplicate
+🔌 NEW USER CONNECTED: r_hYopjrCJZWdFtzAAAS
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: 80rbTnc3woamUEGpAAAT
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: Paul attempting to join room: 2C1367F9
+📊 Current rooms: [ '2C1367F9' ]
+📊 Room data: { roomId: '2C1367F9', username: 'Paul' }
+🏠 Found room: Yes (1 users)
+✅ Paul successfully added to room 2C1367F9
+👥 Room users now: [
+  { socketId: 'iAhhSaEgtUdcYiBrAAAP', username: 'Yau' },
+  { socketId: '80rbTnc3woamUEGpAAAT', username: 'Paul' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 Paul joined room 2C1367F9 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: 'iAhhSaEgtUdcYiBrAAAP', username: 'Yau' }
+📤 Telling iAhhSaEgtUdcYiBrAAAP to create peer connection to 80rbTnc3woamUEGpAAAT
+🚪 RECEIVED join-room event: Paul attempting to join room: 2C1367F9
+📊 Current rooms: [ '2C1367F9' ]
+📊 Room data: { roomId: '2C1367F9', username: 'Paul' }
+🏠 Found room: Yes (2 users)
+👤 Paul is already in room 2C1367F9, skipping duplicate join
+📡 Relaying WebRTC offer from iAhhSaEgtUdcYiBrAAAP to 80rbTnc3woamUEGpAAAT
+🧊 Relaying ICE candidate from iAhhSaEgtUdcYiBrAAAP to 80rbTnc3woamUEGpAAAT
+🧊 Relaying ICE candidate from iAhhSaEgtUdcYiBrAAAP to 80rbTnc3woamUEGpAAAT
+🧊 Relaying ICE candidate from iAhhSaEgtUdcYiBrAAAP to 80rbTnc3woamUEGpAAAT
+🧊 Relaying ICE candidate from iAhhSaEgtUdcYiBrAAAP to 80rbTnc3woamUEGpAAAT
+🔌 User disconnected: 80rbTnc3woamUEGpAAAT
+🔌 User disconnected: iAhhSaEgtUdcYiBrAAAP
+🗑️  Removed empty room: 2C1367F9
+🔌 NEW USER CONNECTED: r5wxiyaCPpC4kkxCAAAW
+📊 Total connected users: 2
+🏠 Creating room: E3136C1F by Yau
+👤 Yau created and joined room E3136C1F
+🏠 Creating room: E3136C1F by Yau
+👤 Yau already in room E3136C1F, skipping duplicate
+🔌 User disconnected: r_hYopjrCJZWdFtzAAAS
+🔌 NEW USER CONNECTED: R-mxVRXkteT6CAncAAAZ
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: -YrzDcazQ4wCd1J6AAAa
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: And attempting to join room: E3136C1F
+📊 Current rooms: [ 'E3136C1F' ]
+📊 Room data: { roomId: 'E3136C1F', username: 'And' }
+🏠 Found room: Yes (1 users)
+✅ And successfully added to room E3136C1F
+👥 Room users now: [
+  { socketId: 'r5wxiyaCPpC4kkxCAAAW', username: 'Yau' },
+  { socketId: '-YrzDcazQ4wCd1J6AAAa', username: 'And' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 And joined room E3136C1F successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: 'r5wxiyaCPpC4kkxCAAAW', username: 'Yau' }
+📤 Telling r5wxiyaCPpC4kkxCAAAW to create peer connection to -YrzDcazQ4wCd1J6AAAa
+📡 Relaying WebRTC offer from r5wxiyaCPpC4kkxCAAAW to -YrzDcazQ4wCd1J6AAAa
+🧊 Relaying ICE candidate from r5wxiyaCPpC4kkxCAAAW to -YrzDcazQ4wCd1J6AAAa
+🧊 Relaying ICE candidate from r5wxiyaCPpC4kkxCAAAW to -YrzDcazQ4wCd1J6AAAa
+🚪 RECEIVED join-room event: And attempting to join room: E3136C1F
+📊 Current rooms: [ 'E3136C1F' ]
+📊 Room data: { roomId: 'E3136C1F', username: 'And' }
+🏠 Found room: Yes (2 users)
+👤 And is already in room E3136C1F, skipping duplicate join
+🧊 Relaying ICE candidate from r5wxiyaCPpC4kkxCAAAW to -YrzDcazQ4wCd1J6AAAa
+🧊 Relaying ICE candidate from r5wxiyaCPpC4kkxCAAAW to -YrzDcazQ4wCd1J6AAAa
+🔌 User disconnected: -YrzDcazQ4wCd1J6AAAa
+🔌 User disconnected: R-mxVRXkteT6CAncAAAZ
+🔌 NEW USER CONNECTED: nUCc2nbxkz79202xAAAd
+📊 Total connected users: 2
+🏠 Creating room: E818ECA5 by HostPlayer
+👤 HostPlayer created and joined room E818ECA5
+🏠 Creating room: E818ECA5 by HostPlayer
+👤 HostPlayer already in room E818ECA5, skipping duplicate
+🔌 NEW USER CONNECTED: NV7zPlDhDo_Eh0RnAAAg
+📊 Total connected users: 3
+🔌 NEW USER CONNECTED: 8XPub4u6XccAFGuYAAAh
+📊 Total connected users: 4
+🚪 RECEIVED join-room event: GuestPlayer attempting to join room: E818ECA5
+📊 Current rooms: [ 'E3136C1F', 'E818ECA5' ]
+📊 Room data: { roomId: 'E818ECA5', username: 'GuestPlayer' }
+🏠 Found room: Yes (1 users)
+✅ GuestPlayer successfully added to room E818ECA5
+👥 Room users now: [
+  { socketId: 'nUCc2nbxkz79202xAAAd', username: 'HostPlayer' },
+  { socketId: 'NV7zPlDhDo_Eh0RnAAAg', username: 'GuestPlayer' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 GuestPlayer joined room E818ECA5 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: 'nUCc2nbxkz79202xAAAd', username: 'HostPlayer' }
+📤 Telling nUCc2nbxkz79202xAAAd to create peer connection to NV7zPlDhDo_Eh0RnAAAg
+🚪 RECEIVED join-room event: GuestPlayer attempting to join room: E818ECA5
+📊 Current rooms: [ 'E3136C1F', 'E818ECA5' ]
+📊 Room data: { roomId: 'E818ECA5', username: 'GuestPlayer' }
+🏠 Found room: Yes (2 users)
+👤 GuestPlayer is already in room E818ECA5, skipping duplicate join
+📡 Relaying WebRTC offer from nUCc2nbxkz79202xAAAd to NV7zPlDhDo_Eh0RnAAAg
+🧊 Relaying ICE candidate from nUCc2nbxkz79202xAAAd to NV7zPlDhDo_Eh0RnAAAg
+🧊 Relaying ICE candidate from nUCc2nbxkz79202xAAAd to NV7zPlDhDo_Eh0RnAAAg
+📡 Relaying WebRTC answer from 8XPub4u6XccAFGuYAAAh to nUCc2nbxkz79202xAAAd
+🧊 Relaying ICE candidate from 8XPub4u6XccAFGuYAAAh to nUCc2nbxkz79202xAAAd
+🔌 User disconnected: nUCc2nbxkz79202xAAAd
+🔌 User disconnected: NV7zPlDhDo_Eh0RnAAAg
+🗑️  Removed empty room: E818ECA5
+🔌 User disconnected: 8XPub4u6XccAFGuYAAAh
+🔌 User disconnected: r5wxiyaCPpC4kkxCAAAW
+🗑️  Removed empty room: E3136C1F
+🔌 NEW USER CONNECTED: 8Kr-DDwAUsVdNdE4AAAk
+📊 Total connected users: 1
+🏠 Creating room: 46F68FE9 by Ats
+👤 Ats created and joined room 46F68FE9
+🏠 Creating room: 46F68FE9 by Ats
+👤 Ats already in room 46F68FE9, skipping duplicate
+🔌 NEW USER CONNECTED: g0wbK5xXBHQMbi96AAAn
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: PnHwH-5axOi23CqsAAAo
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: sd attempting to join room: 46F68FE9
+📊 Current rooms: [ '46F68FE9' ]
+📊 Room data: { roomId: '46F68FE9', username: 'sd' }
+🏠 Found room: Yes (1 users)
+✅ sd successfully added to room 46F68FE9
+👥 Room users now: [
+  { socketId: '8Kr-DDwAUsVdNdE4AAAk', username: 'Ats' },
+  { socketId: 'PnHwH-5axOi23CqsAAAo', username: 'sd' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 sd joined room 46F68FE9 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: '8Kr-DDwAUsVdNdE4AAAk', username: 'Ats' }
+📤 Telling 8Kr-DDwAUsVdNdE4AAAk to create peer connection to PnHwH-5axOi23CqsAAAo
+📡 Relaying WebRTC offer from 8Kr-DDwAUsVdNdE4AAAk to PnHwH-5axOi23CqsAAAo
+🧊 Relaying ICE candidate from 8Kr-DDwAUsVdNdE4AAAk to PnHwH-5axOi23CqsAAAo
+🧊 Relaying ICE candidate from 8Kr-DDwAUsVdNdE4AAAk to PnHwH-5axOi23CqsAAAo
+🚪 RECEIVED join-room event: sd attempting to join room: 46F68FE9
+📊 Current rooms: [ '46F68FE9' ]
+📊 Room data: { roomId: '46F68FE9', username: 'sd' }
+🏠 Found room: Yes (2 users)
+👤 sd is already in room 46F68FE9, skipping duplicate join
+📡 Relaying WebRTC answer from PnHwH-5axOi23CqsAAAo to 8Kr-DDwAUsVdNdE4AAAk
+🧊 Relaying ICE candidate from PnHwH-5axOi23CqsAAAo to 8Kr-DDwAUsVdNdE4AAAk
+🔌 User disconnected: 8Kr-DDwAUsVdNdE4AAAk
+🔌 NEW USER CONNECTED: S42Jw3HlC4H_1_03AAAr
+📊 Total connected users: 3
+🏠 Creating room: 9170CB75 by Yua
+👤 Yua created and joined room 9170CB75
+🏠 Creating room: 9170CB75 by Yua
+👤 Yua already in room 9170CB75, skipping duplicate
+🔌 User disconnected: g0wbK5xXBHQMbi96AAAn
+🔌 User disconnected: PnHwH-5axOi23CqsAAAo
+🗑️  Removed empty room: 46F68FE9
+🔌 NEW USER CONNECTED: Lwmq3mYH-lybp4AxAAAu
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: F_RDb_DlLjWW5Mi7AAAv
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: suf attempting to join room: 9170CB75
+📊 Current rooms: [ '9170CB75' ]
+📊 Room data: { roomId: '9170CB75', username: 'suf' }
+🏠 Found room: Yes (1 users)
+✅ suf successfully added to room 9170CB75
+👥 Room users now: [
+  { socketId: 'S42Jw3HlC4H_1_03AAAr', username: 'Yua' },
+  { socketId: 'F_RDb_DlLjWW5Mi7AAAv', username: 'suf' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 suf joined room 9170CB75 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: 'S42Jw3HlC4H_1_03AAAr', username: 'Yua' }
+📤 Telling S42Jw3HlC4H_1_03AAAr to create peer connection to F_RDb_DlLjWW5Mi7AAAv
+📡 Relaying WebRTC offer from S42Jw3HlC4H_1_03AAAr to F_RDb_DlLjWW5Mi7AAAv
+🧊 Relaying ICE candidate from S42Jw3HlC4H_1_03AAAr to F_RDb_DlLjWW5Mi7AAAv
+🧊 Relaying ICE candidate from S42Jw3HlC4H_1_03AAAr to F_RDb_DlLjWW5Mi7AAAv
+📡 Relaying WebRTC answer from F_RDb_DlLjWW5Mi7AAAv to S42Jw3HlC4H_1_03AAAr
+🧊 Relaying ICE candidate from F_RDb_DlLjWW5Mi7AAAv to S42Jw3HlC4H_1_03AAAr
+🚪 RECEIVED join-room event: suf attempting to join room: 9170CB75
+📊 Current rooms: [ '9170CB75' ]
+📊 Room data: { roomId: '9170CB75', username: 'suf' }
+🏠 Found room: Yes (2 users)
+👤 suf is already in room 9170CB75, skipping duplicate join
+🔌 User disconnected: S42Jw3HlC4H_1_03AAAr
+🔌 NEW USER CONNECTED: dccuQkY4EgWySDDBAAAy
+📊 Total connected users: 3
+🏠 Creating room: F13F6E4C by Host
+👤 Host created and joined room F13F6E4C
+🏠 Creating room: F13F6E4C by Host
+👤 Host already in room F13F6E4C, skipping duplicate
+🔌 User disconnected: F_RDb_DlLjWW5Mi7AAAv
+🗑️  Removed empty room: 9170CB75
+🔌 User disconnected: Lwmq3mYH-lybp4AxAAAu
+🔌 NEW USER CONNECTED: aE2axln82gffYEqPAAA1
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: mfdEu0kLzBbWR-8qAAA2
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: Guest attempting to join room: F13F6E4C
+📊 Current rooms: [ 'F13F6E4C' ]
+📊 Room data: { roomId: 'F13F6E4C', username: 'Guest' }
+🏠 Found room: Yes (1 users)
+✅ Guest successfully added to room F13F6E4C
+👥 Room users now: [
+  { socketId: 'dccuQkY4EgWySDDBAAAy', username: 'Host' },
+  { socketId: 'mfdEu0kLzBbWR-8qAAA2', username: 'Guest' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 Guest joined room F13F6E4C successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: 'dccuQkY4EgWySDDBAAAy', username: 'Host' }
+📤 Telling dccuQkY4EgWySDDBAAAy to create peer connection to mfdEu0kLzBbWR-8qAAA2
+📡 Relaying WebRTC offer from dccuQkY4EgWySDDBAAAy to mfdEu0kLzBbWR-8qAAA2
+🧊 Relaying ICE candidate from dccuQkY4EgWySDDBAAAy to mfdEu0kLzBbWR-8qAAA2
+🧊 Relaying ICE candidate from dccuQkY4EgWySDDBAAAy to mfdEu0kLzBbWR-8qAAA2
+📡 Relaying WebRTC answer from mfdEu0kLzBbWR-8qAAA2 to dccuQkY4EgWySDDBAAAy
+🚪 RECEIVED join-room event: Guest attempting to join room: F13F6E4C
+📊 Current rooms: [ 'F13F6E4C' ]
+📊 Room data: { roomId: 'F13F6E4C', username: 'Guest' }
+🏠 Found room: Yes (2 users)
+👤 Guest is already in room F13F6E4C, skipping duplicate join
+🧊 Relaying ICE candidate from mfdEu0kLzBbWR-8qAAA2 to dccuQkY4EgWySDDBAAAy
+🔌 User disconnected: mfdEu0kLzBbWR-8qAAA2
+🔌 User disconnected: dccuQkY4EgWySDDBAAAy
+🗑️  Removed empty room: F13F6E4C
+🔌 NEW USER CONNECTED: 00O-ZI408FA_htDMAAA5
+📊 Total connected users: 2
+🏠 Creating room: 5C9BA829 by ah
+👤 ah created and joined room 5C9BA829
+🏠 Creating room: 5C9BA829 by ah
+👤 ah already in room 5C9BA829, skipping duplicate
+🔌 User disconnected: aE2axln82gffYEqPAAA1
+🔌 NEW USER CONNECTED: SUJnEohVfa6sSTipAAA8
+📊 Total connected users: 2
+🔌 NEW USER CONNECTED: RQPrGH-QhyGY2v14AAA9
+📊 Total connected users: 3
+🚪 RECEIVED join-room event: ahi attempting to join room: 5C9BA829
+📊 Current rooms: [ '5C9BA829' ]
+📊 Room data: { roomId: '5C9BA829', username: 'ahi' }
+🏠 Found room: Yes (1 users)
+✅ ahi successfully added to room 5C9BA829
+👥 Room users now: [
+  { socketId: '00O-ZI408FA_htDMAAA5', username: 'ah' },
+  { socketId: 'RQPrGH-QhyGY2v14AAA9', username: 'ahi' }
+]
+📤 Sending user-joined event to room
+📤 Sending room-joined confirmation to user
+👤 ahi joined room 5C9BA829 successfully
+🔗 Room now has 2 users, initiating peer connection
+🎯 Other user: { socketId: '00O-ZI408FA_htDMAAA5', username: 'ah' }
+📤 Telling 00O-ZI408FA_htDMAAA5 to create peer connection to RQPrGH-QhyGY2v14AAA9
+📡 Relaying WebRTC offer from 00O-ZI408FA_htDMAAA5 to RQPrGH-QhyGY2v14AAA9
+🧊 Relaying ICE candidate from 00O-ZI408FA_htDMAAA5 to RQPrGH-QhyGY2v14AAA9
+🧊 Relaying ICE candidate from 00O-ZI408FA_htDMAAA5 to RQPrGH-QhyGY2v14AAA9
+📡 Relaying WebRTC answer from RQPrGH-QhyGY2v14AAA9 to 00O-ZI408FA_htDMAAA5
+🧊 Relaying ICE candidate from RQPrGH-QhyGY2v14AAA9 to 00O-ZI408FA_htDMAAA5
+🚪 RECEIVED join-room event: ahi attempting to join room: 5C9BA829
+📊 Current rooms: [ '5C9BA829' ]
+📊 Room data: { roomId: '5C9BA829', username: 'ahi' }
+🏠 Found room: Yes (2 users)
+👤 ahi is already in room 5C9BA829, skipping duplicate join

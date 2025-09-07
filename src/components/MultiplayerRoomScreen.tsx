@@ -146,7 +146,7 @@ const MultiplayerRoomScreen: React.FC<MultiplayerRoomScreenProps> = ({
                                 value={roomId}
                                 onChange={handleRoomIdChange}
                                 className="input-primary text-center text-lg font-mono tracking-wider"
-                                maxLength={8}
+                                maxLength={10}
                                 disabled={isCreating || isJoining}
                             />
                             

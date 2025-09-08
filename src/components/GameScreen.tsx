@@ -320,7 +320,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     ? (isHost ? `Waiting for opponent...\nRoom: ${roomId}` : `Connecting to room: ${roomId}`)
                     : "Connecting to global matchmaking...";
             }
-            if (!opponentData) return "Establishing connection...";
+            // For Global mode, check both opponent data AND video stream
+            if (mode === GameMode.Global) {
+                if (!opponentData) return "Finding opponent...";
+                if (!remoteStream) return "Establishing video connection...";
+            } else {
+                if (!opponentData) return "Establishing connection...";
+            }
             if (gameStatus === GameStatus.Idle) {
                 if (!isMyReady) return "Click 'Ready' to start";
                 if (mode === GameMode.Multiplayer && !isOpponentReady) return `Waiting for ${opponentData.username}...`;
@@ -724,8 +730,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     width: 100%;
                     height: 100%;
                     object-fit: cover;
-                    object-position: center 65% !important;
-                    transform: translateY(-20%) scaleX(-1);
+                    object-position: center 35% !important;
+                    transform: translateY(-15%) scale(2.2) scaleX(-1) !important;
                 }
                 
                 .manga-video-feed canvas {

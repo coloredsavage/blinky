@@ -48,9 +48,6 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ videoRef, canvasRef, username, is
                 playsInline
                 muted={isMuted}
                 className="absolute top-0 left-0 w-full h-full object-cover remote-video"
-                style={{
-                    transform: 'scaleX(-1)'
-                }}
             ></video>
              <div className="absolute bottom-2 left-2 bg-black/60 text-white text-sm px-2 py-1 rounded">
                 {username}

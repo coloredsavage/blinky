@@ -14,6 +14,8 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
 }) => {
   const [playerStats, setPlayerStats] = useState<PlayerStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   
   const {
     isConnected,
@@ -49,7 +51,28 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
     }
   }, [currentMatch, onMatchFound]);
 
+  const checkCamera = async () => {
+    try {
+      setCameraError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user' },
+        audio: false 
+      });
+      // Stop the stream immediately, we just needed to check permission
+      stream.getTracks().forEach(track => track.stop());
+      setCameraReady(true);
+    } catch (error) {
+      console.error('Camera check failed:', error);
+      setCameraError('Camera access required. Please enable camera permissions and try again.');
+      setCameraReady(false);
+    }
+  };
+
   const handleJoinQueue = () => {
+    if (!cameraReady) {
+      checkCamera();
+      return;
+    }
     if (!isInQueue && isConnected) {
       joinGlobalQueue(username);
     }
@@ -160,17 +183,28 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
       <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-6 mb-6">
         <h2 className="text-xl font-bold text-white mb-4">Matchmaking</h2>
         
+        {cameraError && (
+          <div className="text-center mb-4">
+            <div className="text-red-400 text-sm mb-2">
+              {cameraError}
+            </div>
+          </div>
+        )}
+        
         {!isInQueue ? (
           <div className="text-center">
             <div className="text-gray-400 mb-4">
-              Ready to find an opponent?
+              {cameraReady 
+                ? "Camera ready! Find an opponent?" 
+                : "Camera access required for video chat"
+              }
             </div>
             <button 
               className="btn-primary text-lg px-8 py-3"
               onClick={handleJoinQueue}
               disabled={!isConnected || isLoading}
             >
-              {!isConnected ? 'Connecting...' : 'Find Match'}
+              {!isConnected ? 'Connecting...' : cameraReady ? 'Find Match' : 'Enable Camera'}
             </button>
           </div>
         ) : (

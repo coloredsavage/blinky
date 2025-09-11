@@ -8,7 +8,7 @@ interface Opponent {
 }
 
 interface GameMessage {
-  type: 'READY_STATE' | 'BLINK' | 'GAME_STATE' | 'USER_INFO';
+  type: 'READY_STATE' | 'BLINK' | 'GAME_STATE' | 'USER_INFO' | 'FACE_DATA' | 'ANTI_CHEAT_VIOLATION';
   payload?: any;
 }
 
@@ -22,6 +22,22 @@ const useSimplePeer = (username: string) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Not connected');
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  
+  // Anti-cheat face data states
+  const [opponentFaceData, setOpponentFaceData] = useState<{
+    leftEar: number;
+    rightEar: number;
+    isFacePresent: boolean;
+    faceConfidence: number;
+    lastSeenTimestamp: number;
+  }>({
+    leftEar: 0.4,
+    rightEar: 0.4,
+    isFacePresent: false,
+    faceConfidence: 0,
+    lastSeenTimestamp: Date.now()
+  });
+  const [antiCheatViolation, setAntiCheatViolation] = useState<string | null>(null);
   
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
@@ -247,6 +263,24 @@ const useSimplePeer = (username: string) => {
           setOpponent(prev => prev ? {...prev, username: message.payload.username} : null);
         }
         break;
+      case 'FACE_DATA':
+        // Update opponent's face data for anti-cheat validation
+        if (message.payload) {
+          setOpponentFaceData({
+            leftEar: message.payload.leftEar || 0.4,
+            rightEar: message.payload.rightEar || 0.4,
+            isFacePresent: message.payload.isFacePresent || false,
+            faceConfidence: message.payload.faceConfidence || 0,
+            lastSeenTimestamp: message.payload.lastSeenTimestamp || Date.now()
+          });
+        }
+        break;
+      case 'ANTI_CHEAT_VIOLATION':
+        // Handle anti-cheat violation from opponent
+        console.error('🚫 Anti-cheat violation detected:', message.payload);
+        setAntiCheatViolation(message.payload?.reason || 'Unknown violation');
+        setLastBlinkWinner('You Lose - Anti-cheat violation');
+        break;
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -421,6 +455,10 @@ const useSimplePeer = (username: string) => {
     // Game state
     isOpponentReady,
     lastBlinkWinner,
+    
+    // Anti-cheat data
+    opponentFaceData,
+    antiCheatViolation,
     
     // Actions
     createRoom,

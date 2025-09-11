@@ -3,6 +3,7 @@ import { GameMode, GameStatus } from '../types';
 import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
+import useRemoteFaceMesh from '../hooks/useRemoteFaceMesh';
 import useSimplePeer from '../hooks/useSimplePeer';
 import useGlobalMultiplayer from '../hooks/useGlobalMultiplayer';
 import useDistractions from '../hooks/useDistractions';
@@ -40,6 +41,14 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const [needsPermission, setNeedsPermission] = useState(false);
     const [isMyReady, setIsMyReady] = useState(false);
     const [gameStartTime, setGameStartTime] = useState<number | null>(null);
+    
+    // Anti-cheat states
+    const [remoteLeftEar, setRemoteLeftEar] = useState(0.4);
+    const [remoteRightEar, setRemoteRightEar] = useState(0.4);
+    const [remoteFacePresent, setRemoteFacePresent] = useState(false);
+    const [faceDisappearanceStart, setFaceDisappearanceStart] = useState<number | null>(null);
+    const [remoteIsImageStatic, setRemoteIsImageStatic] = useState(false);
+    const [staticImageCheckCount, setStaticImageCheckCount] = useState(0);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -60,6 +69,23 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         startFaceMesh, 
     } = useFaceMesh(videoRef, canvasRef);
     
+    // Remote face detection for anti-cheat
+    const {
+        leftEar: remoteLeftEarDetected,
+        rightEar: remoteRightEarDetected,
+        isFacePresent: remoteFacePresentDetected,
+        faceConfidence: remoteFaceConfidence,
+        lastSeenTimestamp: remoteLastSeenTimestamp
+    } = useRemoteFaceMesh(remoteVideoRef, (faceData) => {
+        // Send face data to opponent for validation
+        if (sendData && (mode === GameMode.Multiplayer || mode === GameMode.Global)) {
+            sendData({ 
+                type: 'FACE_DATA', 
+                payload: faceData 
+            });
+        }
+    });
+    
     // Room-based multiplayer hook
     const { 
       connection,
@@ -72,7 +98,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       isOpponentReady,
       lastBlinkWinner,
       connectionError,
-      connectionStatus
+      connectionStatus,
+      opponentFaceData,
+      antiCheatViolation
     } = useSimplePeer(username);
 
     // Global multiplayer hook
@@ -296,7 +324,89 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }
     }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, setBestScore, gameStartTime, session, updateSessionStats]);
     
+    // Anti-cheat validation for multiplayer modes
+    useEffect(() => {
+        if ((mode !== GameMode.Multiplayer && mode !== GameMode.Global) || gameStatus !== GameStatus.Playing) return;
+        
+        const FACE_DISAPPEARANCE_TIMEOUT = 3000; // 3 seconds
+        const STATIC_IMAGE_CHECK_INTERVAL = 2000; // Check every 2 seconds
+        
+        // Check for face presence violations
+        const checkFacePresence = () => {
+            const now = Date.now();
+            
+            // Check local player face presence
+            if (!isFaceCentered) {
+                if (faceDisappearanceStart === null) {
+                    setFaceDisappearanceStart(now);
+                } else if (now - faceDisappearanceStart > FACE_DISAPPEARANCE_TIMEOUT) {
+                    console.log('🚫 Anti-cheat: Local player face disappeared');
+                    setGameStatus(GameStatus.GameOver);
+                    setWinner('You Lose - Face left frame');
+                    if (sendData) {
+                        sendData({ 
+                            type: 'ANTI_CHEAT_VIOLATION', 
+                            payload: { reason: 'Face disappeared from frame' } 
+                        });
+                    }
+                    return;
+                }
+            } else {
+                setFaceDisappearanceStart(null);
+            }
+            
+            // Check opponent face presence (if we have data)
+            if (opponentFaceData && !opponentFaceData.isFacePresent) {
+                const timeSinceLastSeen = now - opponentFaceData.lastSeenTimestamp;
+                if (timeSinceLastSeen > FACE_DISAPPEARANCE_TIMEOUT) {
+                    console.log('🚫 Anti-cheat: Opponent face disappeared');
+                    setGameStatus(GameStatus.GameOver);
+                    setWinner('You Win - Opponent left frame');
+                    return;
+                }
+            }
+        };
+        
+        // Check for static image (very stable eye positions over time)
+        const checkStaticImage = () => {
+            const STATIC_THRESHOLD = 0.01; // Very small movement threshold
+            const CHECK_HISTORY_LENGTH = 5; // Check last 5 measurements
+            
+            if (staticImageCheckCount >= CHECK_HISTORY_LENGTH) {
+                // Calculate eye position variance over recent history
+                const leftEarVariance = Math.abs(leftEar - 0.4); // Assuming 0.4 is typical open eye
+                const rightEarVariance = Math.abs(rightEar - 0.4);
+                
+                if (leftEarVariance < STATIC_THRESHOLD && rightEarVariance < STATIC_THRESHOLD) {
+                    setRemoteIsImageStatic(true);
+                    console.log('🚫 Anti-cheat: Possible static image detected');
+                    setGameStatus(GameStatus.GameOver);
+                    setWinner('You Lose - Static image detected');
+                    if (sendData) {
+                        sendData({ 
+                            type: 'ANTI_CHEAT_VIOLATION', 
+                            payload: { reason: 'Static image or photo detected' } 
+                        });
+                    }
+                    return;
+                } else {
+                    setStaticImageCheckCount(0); // Reset counter if movement detected
+                }
+            } else {
+                setStaticImageCheckCount(prev => prev + 1);
+            }
+        };
+        
+        const validationInterval = setInterval(() => {
+            checkFacePresence();
+            checkStaticImage();
+        }, 500); // Check every 500ms
+        
+        return () => clearInterval(validationInterval);
+    }, [mode, gameStatus, isFaceCentered, faceDisappearanceStart, leftEar, rightEar, opponentFaceData, staticImageCheckCount, sendData]);
+    
     const getStatusMessage = (): string => {
+        if (antiCheatViolation) return `🚫 Anti-cheat violation:\n${antiCheatViolation}`;
         if (!isCameraReady) return "Waiting for camera access...\nPlease grant permission to play.";
         if (!faceMeshReady) return "Loading Face Detection Model...";
         
@@ -544,8 +654,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                             <div className="vs-divider">VS</div>
                             {renderMangaEyePanel(
                                 opponentData?.username || 'Opponent', 
-                                true,
-                                true, 
+                                opponentFaceData ? opponentFaceData.leftEar > BLINK_THRESHOLD : true,
+                                opponentFaceData ? opponentFaceData.rightEar > BLINK_THRESHOLD : true, 
                                 false
                             )}
                         </>

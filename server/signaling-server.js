@@ -165,14 +165,61 @@ io.on('connection', (socket) => {
     const globalMatch = activeGlobalMatches.get(roomId);
     if (globalMatch) {
       console.log('🌍 Found global match:', globalMatch);
-      // For global matches, the WebRTC setup is already done, just confirm the connection
+      // For global matches, ensure room exists and handle WebRTC connection
       const playerInMatch = globalMatch.players.find(p => p.username === username);
       if (playerInMatch) {
         console.log('✅ Player is part of this global match');
+        
+        // Ensure room exists for global match (create if needed)
+        let room = rooms.get(roomId);
+        if (!room) {
+          console.log('🏠 Creating room for global match:', roomId);
+          room = { 
+            roomId, 
+            users: [],
+            isGlobalMatch: true 
+          };
+          rooms.set(roomId, room);
+        }
+        
+        // Add player to room if not already present
+        const userAlreadyInRoom = room.users.find(u => u.username === username);
+        if (!userAlreadyInRoom) {
+          room.users.push({ socketId: socket.id, username });
+          socket.join(roomId);
+          console.log(`✅ ${username} successfully added to room ${roomId}`);
+        } else {
+          console.log(`👤 ${username} is already in room ${roomId}, skipping duplicate join`);
+        }
+        
+        console.log('👥 Room users now:', room.users);
+        console.log('📤 Sending user-joined event to room');
+        socket.to(roomId).emit('user-joined', { socketId: socket.id, username });
+        
+        console.log('📤 Sending room-joined confirmation to user');
         socket.emit('room-joined', { 
           roomId, 
-          users: globalMatch.players.map(p => ({ socketId: p.socketId, username: p.username }))
+          users: room.users
         });
+        
+        console.log(`👤 ${username} joined room ${roomId} successfully`);
+        
+        // If both players are now in the room, initiate WebRTC
+        if (room.users.length === 2) {
+          console.log('🔗 Room now has 2 users, initiating peer connection');
+          const otherUser = room.users.find(u => u.socketId !== socket.id);
+          console.log('🎯 Other user:', otherUser);
+          
+          if (otherUser) {
+            // Tell the other user to create a peer connection to this user
+            console.log(`📤 Telling ${otherUser.socketId} to create peer connection to ${socket.id}`);
+            io.to(otherUser.socketId).emit('create-peer-connection', {
+              target: socket.id,
+              initiator: true
+            });
+          }
+        }
+        
         return;
       } else {
         console.log('❌ Player not part of this global match');

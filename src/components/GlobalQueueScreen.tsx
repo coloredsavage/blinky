@@ -127,7 +127,15 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
           <span className="text-sm text-gray-400">{connectionStatus}</span>
         </div>
         {error && (
-          <div className="text-red-400 text-sm">{error}</div>
+          <div className="bg-red-500 bg-opacity-20 border border-red-500 rounded-lg p-3 text-red-200 text-sm">
+            <div className="font-semibold mb-1">Connection Issue</div>
+            <div>{error}</div>
+            {error.includes('timeout') && (
+              <div className="mt-2 text-xs text-red-300">
+                Try refreshing the page or check your internet connection
+              </div>
+            )}
+          </div>
         )}
       </div>
 

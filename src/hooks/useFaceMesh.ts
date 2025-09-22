@@ -49,6 +49,33 @@ const getEyesBoundingBox = (landmarks: any[]) => {
   return { minX, maxX, minY, maxY };
 };
 
+const getFaceBoundingBox = (landmarks: any[]) => {
+  if (!landmarks || landmarks.length === 0) return null;
+  
+  // Use all face landmarks to get full face bounds
+  const points = landmarks.filter(Boolean);
+  if (points.length === 0) return null;
+  
+  let minX = Math.min(...points.map(p => p.x));
+  let maxX = Math.max(...points.map(p => p.x));
+  let minY = Math.min(...points.map(p => p.y));
+  let maxY = Math.max(...points.map(p => p.y));
+
+  // Calculate face center
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  
+  // Calculate face dimensions
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  return { 
+    center: { x: centerX, y: centerY },
+    bounds: { width, height },
+    box: { minX, maxX, minY, maxY }
+  };
+};
+
 const analyzeLightingQuality = (videoElement: HTMLVideoElement): 'good' | 'poor' => {
   try {
     const canvas = document.createElement('canvas');
@@ -94,12 +121,27 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
     const [rightEar, setRightEar] = useState(0.4);
     const [isFaceCentered, setIsFaceCentered] = useState(false);
     const [lightingQuality, setLightingQuality] = useState<'good' | 'poor'>('good');
+    const [landmarks, setLandmarks] = useState<any[] | null>(null);
+    const [eyesBoundingBox, setEyesBoundingBox] = useState<{
+        minX: number;
+        maxX: number;
+        minY: number;
+        maxY: number;
+    } | null>(null);
+    const [faceBoundingBox, setFaceBoundingBox] = useState<{
+        center: { x: number; y: number };
+        bounds: { width: number; height: number };
+        box: { minX: number; maxX: number; minY: number; maxY: number };
+    } | null>(null);
     const faceMeshRef = useRef<any>(null);
     const cameraRef = useRef<any>(null);
     const lightingCheckRef = useRef<NodeJS.Timeout | null>(null);
+    const monitoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     const onResults = useCallback((results: any) => {
         if (!canvasRef.current || !videoRef.current) return;
+        if (videoRef.current.readyState !== 4 || videoRef.current.videoWidth === 0) return;
+        
         const canvasCtx = canvasRef.current.getContext('2d');
         if (!canvasCtx) return;
 
@@ -109,12 +151,29 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
+        // Track when onResults is called for monitoring (use a reasonable timestamp)
+        (window as any).lastOnResultsCall = Date.now();
+
         if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-            const landmarks = results.multiFaceLandmarks[0];
+            const detectedLandmarks = results.multiFaceLandmarks[0];
+            
+            // Track last successful detection (use a reasonable timestamp)
+            (window as any).lastFaceDetectionTime = Date.now();
+            (window as any).currentLandmarks = detectedLandmarks; // Store current landmarks
+            
+            // Store landmarks for sharing with opponents
+            setLandmarks(detectedLandmarks);
+            
+            // Calculate face center and bounding box for opponent tracking
+            const faceBox = getFaceBoundingBox(detectedLandmarks);
+            setFaceBoundingBox(faceBox);
             
             // Cropped eyes view
-            const box = getEyesBoundingBox(landmarks);
+            const box = getEyesBoundingBox(detectedLandmarks);
             if(box) {
+                // Store the eye bounding box for hybrid transmission
+                setEyesBoundingBox(box);
+                
                 const w = canvasRef.current.width;
                 const h = canvasRef.current.height;
                 const padX = 0.08;
@@ -127,15 +186,22 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
                 canvasCtx.fillStyle = '#000000'; // True black background
                 canvasCtx.fillRect(0, 0, w, h);
                 canvasCtx.drawImage(videoRef.current, x, y, width, height, 0, 0, w, h);
+            } else {
+                setEyesBoundingBox(null);
             }
             
-            const nose = landmarks[1];
+            const nose = detectedLandmarks[1];
             if (nose) setIsFaceCentered(nose.x > 0.35 && nose.x < 0.65 && nose.y > 0.2 && nose.y < 0.8);
             
-            setLeftEar(getEAR(landmarks, LEFT_EYE_INDICES));
-            setRightEar(getEAR(landmarks, RIGHT_EYE_INDICES));
+            setLeftEar(getEAR(detectedLandmarks, LEFT_EYE_INDICES));
+            setRightEar(getEAR(detectedLandmarks, RIGHT_EYE_INDICES));
         } else {
+            console.log('🚫 onResults called with NO face detected - clearing landmarks');
+            (window as any).currentLandmarks = null;
             setIsFaceCentered(false);
+            setLandmarks(null);
+            setEyesBoundingBox(null);
+            setFaceBoundingBox(null);
         }
         canvasCtx.restore();
     }, [canvasRef, videoRef]);
@@ -155,6 +221,64 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
                     setLightingQuality(quality);
                 }
             }, 2000); // Check every 2 seconds
+            
+            // Start monitoring for stuck landmarks - independent of MediaPipe callbacks
+            if (monitoringIntervalRef.current) {
+                clearInterval(monitoringIntervalRef.current);
+            }
+            
+            // Initialize monitoring timestamps
+            (window as any).lastOnResultsCall = Date.now();
+            (window as any).lastFaceDetectionTime = 0;
+            (window as any).lastForcedCheck = Date.now();
+            
+            monitoringIntervalRef.current = setInterval(() => {
+                const now = Date.now();
+                const lastOnResults = (window as any).lastOnResultsCall || now;
+                const lastFaceDetection = (window as any).lastFaceDetectionTime || 0;
+                const lastForcedCheck = (window as any).lastForcedCheck || now;
+                const currentLandmarks = (window as any).currentLandmarks;
+                
+                // Calculate reasonable time differences
+                const timeSinceOnResults = Math.min(now - lastOnResults, 999999); // Cap at reasonable value
+                const timeSinceFaceDetection = lastFaceDetection > 0 ? Math.min(now - lastFaceDetection, 999999) : 0;
+                const timeSinceLastCheck = Math.min(now - lastForcedCheck, 999999);
+                
+                console.log('🔍 Monitoring:', {
+                    timeSinceOnResults: Math.round(timeSinceOnResults / 1000) + 's',
+                    timeSinceFaceDetection: Math.round(timeSinceFaceDetection / 1000) + 's',
+                    hasCurrentLandmarks: !!currentLandmarks,
+                    landmarkCount: currentLandmarks ? currentLandmarks.length : 0
+                });
+                
+                // Simple backup check - only clear if landmarks are very old
+                if (currentLandmarks && lastFaceDetection > 0 && (now - lastFaceDetection > 3000)) {
+                    console.log('⚠️ Clearing old landmarks after 3s without update');
+                    setLandmarks(null);
+                    setIsFaceCentered(false);
+                    setEyesBoundingBox(null);
+                    (window as any).lastFaceDetectionTime = 0;
+                    (window as any).currentLandmarks = null;
+                }
+                
+                // Legacy monitoring as backup
+                if (timeSinceOnResults > 5000) {
+                    console.log('⚠️ MediaPipe onResults not called for 5s - emergency restart');
+                    setLandmarks(null);
+                    setIsFaceCentered(false);
+                    setEyesBoundingBox(null);
+                    (window as any).lastOnResultsCall = now;
+                    (window as any).lastFaceDetectionTime = 0;
+                    (window as any).currentLandmarks = null;
+                }
+            }, 3000); // Check every 3 seconds
+            
+            // Use setInterval instead of setTimeout to prevent throttling
+            (window as any).keepAliveInterval = setInterval(() => {
+                // Keep background tab active by doing minimal work
+                const now = Date.now();
+                (window as any).lastKeepAlive = now;
+            }, 1000);
         }
     }, []);
 
@@ -166,41 +290,188 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
             clearInterval(lightingCheckRef.current);
             lightingCheckRef.current = null;
         }
+        if (monitoringIntervalRef.current) {
+            clearInterval(monitoringIntervalRef.current);
+            monitoringIntervalRef.current = null;
+        }
+        if ((window as any).keepAliveInterval) {
+            clearInterval((window as any).keepAliveInterval);
+            (window as any).keepAliveInterval = null;
+        }
     }, []);
     
+    // Browser-specific MediaPipe handling
+    useEffect(() => {
+        const isChrome = /Chrome/.test(navigator.userAgent) && !/Chromium/.test(navigator.userAgent);
+        const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+        
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                console.log('⚠️ Tab went to background - keeping MediaPipe active');
+                if (faceMeshRef.current && cameraRef.current) {
+                    setTimeout(() => {
+                        if (cameraRef.current) {
+                            cameraRef.current.start();
+                        }
+                    }, 100);
+                }
+            } else {
+                console.log('✅ Tab returned to foreground - browser-specific MediaPipe refresh');
+                
+                if (isChrome) {
+                    // Chrome needs aggressive restart for face detection recovery
+                    console.log('🟡 Chrome detected - forcing camera restart for face detection recovery');
+                    if (cameraRef.current) {
+                        try {
+                            cameraRef.current.stop();
+                            setTimeout(() => {
+                                if (cameraRef.current) {
+                                    cameraRef.current.start();
+                                    (window as any).lastOnResultsCall = Date.now();
+                                    (window as any).lastFaceDetectionTime = 0;
+                                }
+                            }, 300); // Longer delay for Chrome
+                        } catch (error) {
+                            console.warn('Chrome camera restart failed:', error);
+                        }
+                    }
+                } else if (isSafari) {
+                    // Safari needs gentle restart
+                    console.log('🍎 Safari detected - gentle camera refresh');
+                    if (cameraRef.current) {
+                        try {
+                            setTimeout(() => {
+                                if (cameraRef.current) {
+                                    cameraRef.current.start();
+                                }
+                            }, 100);
+                        } catch (error) {
+                            console.warn('Safari camera refresh failed:', error);
+                        }
+                    }
+                } else {
+                    // Standard handling for Chromium and others
+                    console.log('🔵 Standard browser - normal visibility handling');
+                    if (cameraRef.current) {
+                        try {
+                            cameraRef.current.start();
+                            (window as any).lastOnResultsCall = Date.now();
+                            (window as any).lastFaceDetectionTime = 0;
+                        } catch (error) {
+                            console.warn('Standard camera restart failed:', error);
+                        }
+                    }
+                }
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        
+        // Chrome-specific: Add periodic face detection recovery check
+        let chromeRecoveryInterval;
+        if (isChrome) {
+            chromeRecoveryInterval = setInterval(() => {
+                const now = Date.now();
+                const lastOnResults = (window as any).lastOnResultsCall || now;
+                const currentLandmarks = (window as any).currentLandmarks;
+                
+                // If Chrome hasn't had face detection for 3 seconds, force restart
+                if (now - lastOnResults > 3000 && !currentLandmarks) {
+                    console.log('🟡 Chrome face detection recovery - forcing restart');
+                    if (cameraRef.current) {
+                        try {
+                            cameraRef.current.stop();
+                            setTimeout(() => {
+                                if (cameraRef.current) {
+                                    cameraRef.current.start();
+                                    (window as any).lastOnResultsCall = Date.now();
+                                }
+                            }, 200);
+                        } catch (error) {
+                            console.warn('Chrome recovery restart failed:', error);
+                        }
+                    }
+                }
+            }, 5000); // Check every 5 seconds
+        }
+        
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            if (chromeRecoveryInterval) {
+                clearInterval(chromeRecoveryInterval);
+            }
+        };
+    }, []);
+
     useEffect(() => {
         if (!videoRef.current) return;
         
-        const faceMesh = new (window as any).FaceMesh({
-            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
+        // Check if MediaPipe libraries are loaded
+        console.log('🔍 MediaPipe availability check:', {
+            FaceMesh: typeof (window as any).FaceMesh,
+            Camera: typeof (window as any).Camera,
+            availableGlobals: Object.keys(window).filter(k => k.includes('Face') || k.includes('Camera') || k.includes('MediaPipe'))
         });
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-        });
-        faceMesh.onResults(onResults);
-        faceMeshRef.current = faceMesh;
+        
+        if (typeof (window as any).FaceMesh === 'undefined') {
+            console.error('❌ MediaPipe FaceMesh not loaded. Check CDN loading.');
+            console.error('🔍 Available window properties:', Object.keys(window).slice(0, 20));
+            return;
+        }
+        
+        if (typeof (window as any).Camera === 'undefined') {
+            console.error('❌ MediaPipe Camera not loaded. Check CDN loading.');
+            console.error('🔍 Available window properties:', Object.keys(window).slice(0, 20));
+            return;
+        }
+        
+        try {
+            const faceMesh = new (window as any).FaceMesh({
+                locateFile: (file: string) => {
+                    const jsDelivrUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`;
+                    console.log(`🔍 Loading MediaPipe asset: ${file} from ${jsDelivrUrl}`);
+                    return jsDelivrUrl;
+                },
+            });
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5,
+            });
+            faceMesh.onResults(onResults);
+            faceMeshRef.current = faceMesh;
 
-        const camera = new (window as any).Camera(videoRef.current, {
-            onFrame: async () => {
-                if (videoRef.current) {
-                    await faceMesh.send({ image: videoRef.current });
-                }
-            },
-            width: 640,
-            height: 480
-        });
-        cameraRef.current = camera;
-        setIsReady(true);
+            const camera = new (window as any).Camera(videoRef.current, {
+                onFrame: async () => {
+                    if (videoRef.current && 
+                        videoRef.current.readyState === 4 && 
+                        videoRef.current.videoWidth > 0 && 
+                        videoRef.current.videoHeight > 0) {
+                        try {
+                            await faceMesh.send({ image: videoRef.current });
+                        } catch (error) {
+                            console.warn('Face mesh processing error:', error);
+                        }
+                    }
+                },
+                width: 640,
+                height: 480
+            });
+            cameraRef.current = camera;
+            setIsReady(true);
+            console.log('✅ MediaPipe FaceMesh initialized successfully');
+        } catch (error) {
+            console.error('❌ Failed to initialize MediaPipe FaceMesh:', error);
+            setIsReady(false);
+        }
 
         return () => {
             stopFaceMesh();
         };
-    }, [onResults, videoRef, stopFaceMesh]);
+    }, [videoRef]); // Only depend on videoRef, not callback functions
 
-    return { isReady, leftEar, rightEar, isFaceCentered, lightingQuality, startFaceMesh, stopFaceMesh };
+    return { isReady, leftEar, rightEar, isFaceCentered, lightingQuality, landmarks, eyesBoundingBox, faceBoundingBox, startFaceMesh, stopFaceMesh };
 };
 
 export default useFaceMesh;

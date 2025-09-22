@@ -1,10 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GameMode, GameStatus } from '../types';
-import VideoFeed from './VideoFeed';
+import SinglePlayerVideoFeed from './SinglePlayerVideoFeed';
+import MultiplayerVideoFeed from './MultiplayerVideoFeed';
+import DebugSidebar from './DebugSidebar';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
 import useRemoteFaceMesh from '../hooks/useRemoteFaceMesh';
 import useSimplePeer from '../hooks/useSimplePeer';
+import useOptimalFaceMesh from '../hooks/useOptimalFaceMesh';
+import useOptimalPeer from '../hooks/useOptimalPeer';
+import useBlinkTransmission from '../hooks/useBlinkTransmission';
 import useGlobalMultiplayer from '../hooks/useGlobalMultiplayer';
 import useDistractions from '../hooks/useDistractions';
 import useSession from '../hooks/useSession';
@@ -31,9 +36,10 @@ interface GameScreenProps {
     isHost: boolean;
     session?: AnonymousSession | null;
     globalMatchData?: any;
+    useOptimalMode?: boolean;
 }
 
-const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost, session, globalMatchData }) => {
+const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit, isHost, session, globalMatchData, useOptimalMode = false }) => {
     const [gameStatus, setGameStatus] = useState(GameStatus.Idle);
     const [winner, setWinner] = useState<string | null>(null);
     const [countdown, setCountdown] = useState(3);
@@ -49,10 +55,36 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const [faceDisappearanceStart, setFaceDisappearanceStart] = useState<number | null>(null);
     const [remoteIsImageStatic, setRemoteIsImageStatic] = useState(false);
     const [staticImageCheckCount, setStaticImageCheckCount] = useState(0);
+    
+    // Hybrid blink states
+    const [remoteBlinkData, setRemoteBlinkData] = useState<{
+        isBlinking: boolean;
+        confidence: number;
+        timestamp: number;
+        playerId: string;
+        isFaceVisible: boolean;
+        landmarkCount?: number;
+        faceCenter?: { x: number; y: number } | null;
+        faceBounds?: { width: number; height: number } | null;
+    } | null>(null);
+    
+    // Face transmission tracking for debug sidebar
+    const [lastSentFaceData, setLastSentFaceData] = useState<{
+        isFaceVisible: boolean;
+        landmarkCount: number;
+        timestamp: number;
+    } | null>(null);
+    const [lastReceivedFaceData, setLastReceivedFaceData] = useState<{
+        isFaceVisible: boolean;
+        landmarkCount: number;
+        timestamp: number;
+        playerId: string;
+    } | null>(null);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const remoteCanvasRef = useRef<HTMLCanvasElement>(null); // Add canvas ref for remote video
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const bothEyesClosedStart = useRef<number | null>(null);
     
@@ -66,6 +98,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         rightEar, 
         isFaceCentered, 
         lightingQuality,
+        landmarks,
+        faceBoundingBox,
+        eyesBoundingBox,
         startFaceMesh, 
     } = useFaceMesh(videoRef, canvasRef);
     
@@ -95,6 +130,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       createRoom,
       joinRoom,
       sendData,
+      sendHybridBlink,
       isOpponentReady,
       lastBlinkWinner,
       connectionError,
@@ -112,7 +148,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     // Determine which multiplayer system to use
     const isGlobalMode = mode === GameMode.Global;
     const multiplayerData = isGlobalMode ? globalMatchData : null;
-    const opponentData = isGlobalMode ? globalMatch?.opponent : opponent;
+    const opponentData = isGlobalMode ? globalMatchData?.opponent : opponent;
 
     // Initialize distraction system
     const {
@@ -190,16 +226,29 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [requestCamera]);
 
     useEffect(() => {
-        if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && roomId) {
+        if (mode === GameMode.Multiplayer && roomId) {
+            // Regular multiplayer: immediate room creation/joining
             if (isHost) {
-                console.log(`🏠 HOST: useEffect calling createRoom for ${mode === GameMode.Global ? 'matchId' : 'roomId'}:`, roomId);
+                console.log(`🏠 HOST: useEffect calling createRoom for roomId:`, roomId);
                 createRoom(roomId);
             } else {
-                console.log(`👤 GUEST: useEffect calling joinRoom for ${mode === GameMode.Global ? 'matchId' : 'roomId'}:`, roomId);
+                console.log(`👤 GUEST: useEffect calling joinRoom for roomId:`, roomId);
                 joinRoom(roomId);
             }
+        } else if (mode === GameMode.Global && roomId && globalMatchData?.roomReady) {
+            // Global mode: only proceed when server confirms room is ready
+            console.log(`🌍 GLOBAL: Server confirms room ${roomId} is ready, proceeding with WebRTC setup`);
+            if (isHost) {
+                console.log(`🏠 GLOBAL HOST: joining server-created room:`, roomId);
+                createRoom(roomId);
+            } else {
+                console.log(`👤 GLOBAL GUEST: joining server-created room:`, roomId);
+                joinRoom(roomId);
+            }
+        } else if (mode === GameMode.Global && roomId && !globalMatchData?.roomReady) {
+            console.log(`🌍 GLOBAL: Waiting for server to confirm room ${roomId} is ready...`);
         }
-    }, [mode, roomId, isHost]); // Removed createRoom, joinRoom from dependencies to prevent re-runs
+    }, [mode, roomId, isHost, globalMatchData?.roomReady]); // Added roomReady dependency
     
     useEffect(() => {
         if (lastBlinkWinner) {
@@ -287,12 +336,73 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown, opponentData]);
 
     useEffect(() => {
-        if (gameStatus !== GameStatus.Playing || !faceMeshReady) return;
+        if (!faceMeshReady) return;
 
         const leftClosed = leftEar < BLINK_THRESHOLD;
         const rightClosed = rightEar < BLINK_THRESHOLD;
+        const isBlinking = leftClosed && rightClosed;
         
-        if (leftClosed && rightClosed) {
+        // Send hybrid blink data for multiplayer modes (lightweight transmission)
+        // Send as soon as connected, not just when game is playing
+        if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && isConnected && sendHybridBlink) {
+            const confidence = Math.min(
+                Math.abs(leftEar - BLINK_THRESHOLD) + Math.abs(rightEar - BLINK_THRESHOLD),
+                1.0
+            );
+            // Use landmarks to detect if face is present - require substantial landmarks for reliability
+            const landmarkCount = landmarks?.length || 0;
+            // Simplified detection - if we have good landmarks, face is visible
+            const hasGoodFace = landmarks !== null && landmarkCount >= 300; // Decent face detection (64% of 468)
+            const isFaceVisible = hasGoodFace; // Simple: if we have 300+ landmarks, face is visible
+            
+            // Add timeout-based fallback - if no landmark updates for 3 seconds, assume face is gone
+            const currentTime = Date.now();
+            if (landmarks && landmarks.length > 0) {
+                // Update last seen time when we have landmarks
+                if (!(window as any).lastLandmarkTime) (window as any).lastLandmarkTime = currentTime;
+                (window as any).lastLandmarkTime = currentTime;
+            } else if ((window as any).lastLandmarkTime && (currentTime - (window as any).lastLandmarkTime > 3000)) {
+                // No landmarks for 3+ seconds, force face invisible
+                const forcedFaceVisible = false;
+                sendHybridBlink(isBlinking, confidence, forcedFaceVisible);
+                return; // Exit early with forced invisible state
+            }
+            console.log('🔍 SENDING face visibility:', {
+                isBlinking,
+                isFaceCentered,
+                faceMeshReady,
+                hasLandmarks: landmarks !== null,
+                landmarksCount: landmarks?.length || 0,
+                isFaceVisible,
+                landmarkCount,
+                leftEar,
+                rightEar,
+                username
+            });
+            // Update debug timestamp to show data is being sent
+            (window as any).lastSentTime = Date.now();
+            
+            // Track sent face data for debug sidebar
+            setLastSentFaceData({
+                isFaceVisible,
+                landmarkCount,
+                timestamp: Date.now()
+            });
+            
+            sendHybridBlink(
+                isBlinking, 
+                confidence, 
+                isFaceVisible, 
+                landmarkCount,
+                faceBoundingBox?.center,
+                faceBoundingBox?.bounds
+            );
+        }
+        
+        // Only end the game if actually playing
+        if (gameStatus !== GameStatus.Playing) return;
+        
+        if (isBlinking) {
             if (bothEyesClosedStart.current === null) {
                 bothEyesClosedStart.current = Date.now();
             } else if (Date.now() - bothEyesClosedStart.current > BLINK_DURATION_MS) {
@@ -322,7 +432,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         } else {
             bothEyesClosedStart.current = null;
         }
-    }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, setBestScore, gameStartTime, session, updateSessionStats]);
+    }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, sendHybridBlink, isConnected, setBestScore, gameStartTime, session, updateSessionStats, opponentData, submitGameResult]);
     
     // Anti-cheat validation for multiplayer modes
     useEffect(() => {
@@ -404,6 +514,52 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         
         return () => clearInterval(validationInterval);
     }, [mode, gameStatus, isFaceCentered, faceDisappearanceStart, leftEar, rightEar, opponentFaceData, staticImageCheckCount, sendData]);
+    
+    // Listen for hybrid blink events from opponent
+    useEffect(() => {
+        const handleHybridBlink = (event: CustomEvent) => {
+            const blinkData = event.detail;
+            console.log('🎯 GameScreen received hybridBlinkReceived event:', blinkData);
+            console.log('🎯 Face visibility in received data:', blinkData.isFaceVisible);
+            console.log('🎯 Complete received blink data:', {
+                isBlinking: blinkData.isBlinking,
+                isFaceVisible: blinkData.isFaceVisible,
+                landmarkCount: blinkData.landmarkCount,
+                timestamp: blinkData.timestamp,
+                playerId: blinkData.playerId
+            });
+            setRemoteBlinkData(blinkData);
+            
+            // Track received face data for debug sidebar
+            setLastReceivedFaceData({
+                isFaceVisible: blinkData.isFaceVisible,
+                landmarkCount: blinkData.landmarkCount || 0,
+                timestamp: blinkData.timestamp,
+                playerId: blinkData.playerId || 'Unknown'
+            });
+            
+            // Update the visual display immediately
+            if (blinkData.isBlinking) {
+                setRemoteLeftEar(0.2); // Closed eye value
+                setRemoteRightEar(0.2);
+                console.log('👁️ Updated opponent eyes to CLOSED (0.2)');
+            } else {
+                setRemoteLeftEar(0.6); // Open eye value
+                setRemoteRightEar(0.6);
+                console.log('👁️ Updated opponent eyes to OPEN (0.6)');
+            }
+        };
+
+        console.log('🔧 Setting up hybridBlinkReceived event listener');
+        window.addEventListener('hybridBlinkReceived', handleHybridBlink as EventListener);
+        
+        return () => {
+            console.log('🔧 Removing hybridBlinkReceived event listener');
+            window.removeEventListener('hybridBlinkReceived', handleHybridBlink as EventListener);
+        };
+    }, []);
+    
+    // Note: Canvas streaming removed to reduce video lag
     
     const getStatusMessage = (): string => {
         if (antiCheatViolation) return `🚫 Anti-cheat violation:\n${antiCheatViolation}`;
@@ -608,23 +764,55 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             <div className="manga-video-container mb-4">
                 <div className="manga-video-feed">
                     <div className="video-crop-wrapper">
-                        <VideoFeed 
-                            videoRef={videoRef} 
-                            canvasRef={canvasRef} 
-                            username={username} 
-                            isMuted={true} 
-                        />
+                        {mode === GameMode.SinglePlayer ? (
+                            <SinglePlayerVideoFeed 
+                                videoRef={videoRef} 
+                                canvasRef={canvasRef} 
+                                username={username} 
+                            />
+                        ) : (
+                            <MultiplayerVideoFeed 
+                                videoRef={videoRef} 
+                                canvasRef={canvasRef} 
+                                username={username} 
+                                isLocal={true}
+                                landmarkCount={landmarks?.length || 0}
+                                faceCentered={isFaceCentered}
+                                isFaceVisible={landmarks !== null && landmarks.length >= 300}
+                            />
+                        )}
                     </div>
                 </div>
                 {(mode === GameMode.Multiplayer || mode === GameMode.Global) && (
                     <div className="manga-video-feed">
                         <div className="video-crop-wrapper">
-                            <VideoFeed 
-                                videoRef={remoteVideoRef} 
-                                username={opponentData?.username || 'Waiting...'} 
-                                isMuted={false} 
-                                remoteStream={remoteStream} 
-                            />
+                            {(() => {
+                                const faceVisible = remoteBlinkData?.isFaceVisible ?? false;
+                                console.log('🎯 RENDERING OPPONENT VIDEO SECTION:', {
+                                    mode,
+                                    opponentData: !!opponentData,
+                                    opponentUsername: opponentData?.username,
+                                    remoteStream: !!remoteStream,
+                                    remoteBlinkData,
+                                    isFaceVisible: faceVisible,
+                                    hasRemoteBlinkData: !!remoteBlinkData
+                                });
+                                
+                                
+                                return (
+                                    <MultiplayerVideoFeed 
+                                        videoRef={remoteVideoRef} 
+                                        canvasRef={remoteCanvasRef}
+                                        username={opponentData?.username || 'Waiting...'} 
+                                        isLocal={false}
+                                        remoteStream={remoteStream} 
+                                        isFaceVisible={faceVisible}
+                                        landmarkCount={(remoteBlinkData as any)?.landmarkCount || 0}
+                                        faceCenter={remoteBlinkData?.faceCenter}
+                                        faceBounds={remoteBlinkData?.faceBounds}
+                                    />
+                                );
+                            })()}
                         </div>
                     </div>
                 )}
@@ -654,8 +842,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                             <div className="vs-divider">VS</div>
                             {renderMangaEyePanel(
                                 opponentData?.username || 'Opponent', 
-                                opponentFaceData ? opponentFaceData.leftEar > BLINK_THRESHOLD : true,
-                                opponentFaceData ? opponentFaceData.rightEar > BLINK_THRESHOLD : true, 
+                                remoteBlinkData ? !remoteBlinkData.isBlinking : (remoteLeftEar > BLINK_THRESHOLD),
+                                remoteBlinkData ? !remoteBlinkData.isBlinking : (remoteRightEar > BLINK_THRESHOLD), 
                                 false
                             )}
                         </>
@@ -663,6 +851,26 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 </div>
 
                 {renderScore()}
+
+                {/* Hybrid Blink Transmission Debug Info */}
+                {(mode === GameMode.Multiplayer || mode === GameMode.Global) && isConnected && (
+                    <div className="mb-4 text-center">
+                        <div className="bg-black bg-opacity-50 px-4 py-2 rounded-md text-sm">
+                            <div className="text-green-400 font-mono">
+                                🔗 Hybrid Blink: {remoteBlinkData ? (remoteBlinkData.isBlinking ? '😑 BLINK' : '👁️ OPEN') : '⏳ Waiting...'}
+                            </div>
+                            {remoteBlinkData && (
+                                <div className="text-xs text-gray-400">
+                                    Confidence: {remoteBlinkData.confidence.toFixed(2)} | 
+                                    Latency: {Date.now() - remoteBlinkData.timestamp}ms
+                                </div>
+                            )}
+                            <div className="text-xs text-gray-500">
+                                Connected: {isConnected ? '✅' : '❌'} | Face: {faceMeshReady ? '✅' : '❌'}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="my-4 min-h-24 flex items-center justify-center">
                     {gameStatus === GameStatus.Countdown && (
@@ -966,6 +1174,47 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     }
                 }
             `}</style>
+            
+            {/* Debug Sidebar */}
+            <DebugSidebar 
+                debugInfo={{
+                    isConnected,
+                    connectionStatus,
+                    hasLocalStream: !!videoRef.current?.srcObject,
+                    hasRemoteStream: !!remoteStream,
+                    localStreamTracks: (videoRef.current?.srcObject as MediaStream)?.getTracks().length || 0,
+                    remoteStreamTracks: remoteStream?.getTracks().length || 0,
+                    opponentUsername: opponentData?.username || 'None',
+                    opponentFaceVisible: remoteBlinkData?.isFaceVisible ?? false,
+                    isPeerInitiator: isHost,
+                    peerConnected: isConnected,
+                    localStreamId: (videoRef.current?.srcObject as MediaStream)?.id,
+                    remoteStreamId: remoteStream?.id,
+                    // Remote video element debug
+                    remoteVideoDebug: remoteVideoRef.current ? {
+                        exists: true,
+                        hasStreamAssigned: !!remoteVideoRef.current.srcObject,
+                        readyState: ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'][remoteVideoRef.current.readyState] || 'UNKNOWN',
+                        videoWidth: remoteVideoRef.current.videoWidth,
+                        videoHeight: remoteVideoRef.current.videoHeight,
+                        paused: remoteVideoRef.current.paused,
+                        muted: remoteVideoRef.current.muted
+                    } : {
+                        exists: false,
+                        hasStreamAssigned: false,
+                        readyState: 'NO_ELEMENT',
+                        videoWidth: 0,
+                        videoHeight: 0,
+                        paused: true,
+                        muted: true
+                    },
+                    // Face transmission debug data
+                    localFaceVisible: landmarks !== null && landmarks.length >= 300,
+                    lastSentFaceData,
+                    lastReceivedFaceData,
+                    faceDataReceived: !!lastReceivedFaceData && (Date.now() - lastReceivedFaceData.timestamp < 5000)
+                }}
+            />
         </div>
     );
 };

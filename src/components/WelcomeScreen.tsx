@@ -28,6 +28,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     const [createdRoomId, setCreatedRoomId] = useState<string | null>(null);
     const [copyButtonText, setCopyButtonText] = useState('Copy Link');
     const [error, setError] = useState('');
+    const [showHybridOption, setShowHybridOption] = useState(false);
 
     // Auto-show multiplayer setup if joining via URL
     useEffect(() => {
@@ -66,7 +67,8 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
     const handleGlobalMultiplayerStart = () => {
         console.log('🎯 Global multiplayer button clicked');
-        const playerName = prompt('Enter your username:');
+        // Use the input field value first, then fallback to prompt
+        const playerName = username.trim() || prompt('Enter your username:');
         console.log('📝 User entered username:', playerName);
         
         if (!playerName) {
@@ -216,6 +218,36 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                         >
                             🌍 Global Stare-Down
                         </button>
+                        
+                        {/* Hybrid Mode Option */}
+                        <div className="mt-4 pt-4 border-t border-gray-700">
+                            <div className="text-sm text-gray-400 mb-2">
+                                ⚡ Experimental Hybrid Mode
+                            </div>
+                            <button 
+                                onClick={() => setShowHybridOption(!showHybridOption)} 
+                                className="text-xs text-purple-400 hover:text-purple-300 underline"
+                            >
+                                {showHybridOption ? 'Hide' : 'Show'} Advanced Options
+                            </button>
+                            
+                            {showHybridOption && (
+                                <div className="mt-3 space-y-2">
+                                    <div className="text-xs text-gray-500 mb-2">
+                                        Hybrid: Local FaceMesh + Lightweight Transmission
+                                    </div>
+                                    <button 
+                                        onClick={() => {
+                                            if (!validateUsername(username || 'HybridPlayer')) return;
+                                            onStartGame(GameMode.Multiplayer, username || 'HybridPlayer', 'HYBRID' + Math.random().toString(36).substr(2, 6).toUpperCase(), true);
+                                        }} 
+                                        className="btn-secondary text-sm w-full"
+                                    >
+                                        🔬 Create Hybrid Room
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </>
             ) : (

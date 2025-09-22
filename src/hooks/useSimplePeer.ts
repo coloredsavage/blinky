@@ -8,8 +8,21 @@ interface Opponent {
 }
 
 interface GameMessage {
-  type: 'READY_STATE' | 'BLINK' | 'GAME_STATE' | 'USER_INFO' | 'FACE_DATA' | 'ANTI_CHEAT_VIOLATION';
+  type: 'READY_STATE' | 'BLINK' | 'GAME_STATE' | 'USER_INFO' | 'FACE_DATA' | 'ANTI_CHEAT_VIOLATION' | 'EYE_DATA' | 'blink' | 'HYBRID_BLINK';
   payload?: any;
+  isBlinking?: boolean;
+  timestamp?: number;
+  playerId?: string;
+  confidence?: number;
+}
+
+interface EyeData {
+  leftEyeOpenness: number;  // 0-1 scale
+  rightEyeOpenness: number; // 0-1 scale
+  isBlinking: boolean;
+  isFaceCentered: boolean;
+  timestamp: number;
+  playerId: string;
 }
 
 const useSimplePeer = (username: string) => {
@@ -38,8 +51,10 @@ const useSimplePeer = (username: string) => {
     lastSeenTimestamp: Date.now()
   });
   const [antiCheatViolation, setAntiCheatViolation] = useState<string | null>(null);
+  const [remoteEyeData, setRemoteEyeData] = useState<EyeData | null>(null);
   
   const localStreamRef = useRef<MediaStream | null>(null);
+  const canvasStreamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const hasJoinedRoomRef = useRef<boolean>(false);
@@ -74,9 +89,9 @@ const useSimplePeer = (username: string) => {
       return socketRef.current;
     }
 
-    console.log('🔌 Creating new socket connection to http://localhost:3001');
+    console.log('🔌 Creating new socket connection to http://localhost:3001', 'Current socket exists:', !!socketRef.current);
     const newSocket = io('http://localhost:3001', {
-      transports: ['websocket', 'polling'],
+      transports: ['polling'], // Use polling only to avoid WebSocket 400 errors
       timeout: 10000,
       forceNew: true
     });
@@ -123,13 +138,49 @@ const useSimplePeer = (username: string) => {
 
     newSocket.on('room-error', (data) => {
       console.error('❌ Room error:', data);
+      
+      // For Global Multiplayer guests, implement retry logic when room isn't ready
+      const isGlobalMatchId = data.roomId && data.roomId.startsWith('GM_');
+      const isRoomNotReady = data.message && data.message.includes('Room not ready yet');
+      
+      if (isGlobalMatchId && isRoomNotReady) {
+        console.log('⏳ Global match room not ready, implementing retry logic...');
+        setConnectionStatus('Waiting for host to create room...');
+        
+        // Retry joining the room after a delay
+        setTimeout(() => {
+          if (socketRef.current && data.roomId) {
+            console.log('🔄 Retrying join room for global match:', data.roomId);
+            hasJoinedRoomRef.current = false; // Reset join flag to allow retry
+            socketRef.current.emit('join-room', {
+              roomId: data.roomId,
+              username: username
+            });
+          }
+        }, 2000); // Retry after 2 seconds
+        
+        return;
+      }
+      
+      // Handle timeout errors with shouldRetryMatch flag
+      if (data.shouldRetryMatch) {
+        console.log('🔄 Server suggests retrying match due to timeout');
+        setConnectionError('Connection timeout. Please try finding a match again.');
+        setConnectionStatus('Match timeout - please retry');
+        // Let the user manually retry by going back to queue
+        return;
+      }
+      
+      // For other errors, show the error normally
       setConnectionError(data.message);
       setConnectionStatus(`Room error: ${data.message}`);
     });
 
     newSocket.on('user-joined', (data) => {
       console.log('👤 User joined:', data);
-      setOpponent({ username: data.username, socketId: data.socketId });
+      const opponentData = { username: data.username, socketId: data.socketId };
+      console.log('🔧 Setting opponent to:', opponentData);
+      setOpponent(opponentData);
       setConnectionStatus('User joined, establishing connection...');
     });
 
@@ -161,6 +212,57 @@ const useSimplePeer = (username: string) => {
       }
     });
 
+    // Handle hybrid blink fallback messages
+    newSocket.on('hybrid-blink', (data) => {
+      console.log('🔄 Socket.IO RECEIVED:', {
+        hasData: !!data,
+        hasDataData: !!(data && data.data),
+        fullMessage: data
+      });
+      if (data && data.data) {
+        const blinkEvent = data.data;
+        
+        // Filter out our own messages - only process opponent data
+        if (blinkEvent.playerId === username) {
+          console.log('🔄 Ignoring own face data from:', blinkEvent.playerId);
+          return;
+        }
+        
+        console.log('👁️ Socket.IO PROCESSING:', {
+          isBlinking: blinkEvent.isBlinking ? '😑' : '👁️',
+          isFaceVisible: blinkEvent.isFaceVisible,
+          timestamp: `${Date.now() - blinkEvent.timestamp}ms ago`,
+          from: blinkEvent.playerId,
+          fullEvent: blinkEvent
+        });
+        // Dispatch event for hybrid blink system
+        console.log('🔔 Dispatching hybridBlinkReceived event via Socket.IO fallback');
+        window.dispatchEvent(new CustomEvent('hybridBlinkReceived', { 
+          detail: blinkEvent 
+        }));
+        console.log('✅ Socket.IO fallback event dispatched successfully');
+      } else {
+        console.error('❌ Received hybrid-blink with invalid data:', data);
+      }
+    });
+
+    // Debug: Log when socket connects
+    newSocket.on('connect', () => {
+      console.log('🔌 Socket connected, hybrid-blink listener is ready');
+      console.log('🔍 Socket ID:', newSocket.id);
+      
+      // Test if socket can receive events
+      setTimeout(() => {
+        console.log('🧪 Testing Socket.IO connectivity...');
+        newSocket.emit('ping'); // This should trigger a 'pong' response
+      }, 1000);
+    });
+
+    // Handle ping response for connectivity test
+    newSocket.on('pong', () => {
+      console.log('✅ Socket.IO connectivity test passed');
+    });
+
     return newSocket;
   }, []);
 
@@ -172,13 +274,18 @@ const useSimplePeer = (username: string) => {
     }
 
     console.log(`🔗 Creating peer connection (initiator: ${isInitiator})`);
+    console.log('📹 Local stream available:', !!localStreamRef.current);
+    console.log('📹 Local stream tracks:', localStreamRef.current.getTracks().map(t => `${t.kind}:${t.readyState}:${t.enabled}`));
     
     const newPeer = new SimplePeer({
       initiator: isInitiator,
       stream: localStreamRef.current,
       config: rtcConfig,
-      trickle: true
+      trickle: true,
+      allowHalfTrickle: true // Allow connections even with incomplete ICE gathering
     });
+    
+    console.log('🔗 Peer created with local stream. Will send', localStreamRef.current.getTracks().length, 'tracks to remote peer.');
 
     // Handle signaling
     newPeer.on('signal', (data) => {
@@ -197,6 +304,9 @@ const useSimplePeer = (username: string) => {
     // Handle successful connection
     newPeer.on('connect', () => {
       console.log('✅ Peer connected successfully!');
+      console.log('📊 Peer state - connected:', newPeer.connected, 'destroyed:', newPeer.destroyed);
+      console.log('🔗 Data channel ready for bidirectional transmission');
+      console.log('🔍 Stream status - Local available:', !!localStreamRef.current, 'Remote received:', !!remoteStream);
       setIsConnected(true);
       setConnectionStatus('Connected to opponent');
       setConnectionError(null);
@@ -205,24 +315,45 @@ const useSimplePeer = (username: string) => {
     // Handle incoming stream
     newPeer.on('stream', (stream) => {
       console.log('📹 Received remote stream:', stream);
-      console.log('📹 Stream tracks:', stream.getTracks());
+      const tracks = stream.getTracks();
+      console.log('📹 Stream tracks:', tracks.map(t => `${t.kind}:${t.readyState}:${t.enabled}`));
+      
+      // Validate stream has video tracks
+      const videoTracks = tracks.filter(t => t.kind === 'video');
+      if (videoTracks.length === 0) {
+        console.warn('⚠️ Remote stream has no video tracks');
+      } else {
+        console.log('✅ Remote stream has', videoTracks.length, 'video track(s)');
+      }
+      
       setRemoteStream(stream);
     });
 
     // Handle data messages
     newPeer.on('data', (data) => {
+      console.log('📤 Raw data received:', data.toString().substring(0, 100) + '...');
       try {
         const message: GameMessage = JSON.parse(data.toString());
+        console.log('🔍 Parsed message type:', message.type, 'payload exists:', !!message.payload);
         handleGameMessage(message);
       } catch (error) {
-        console.error('❌ Failed to parse game message:', error);
+        console.error('❌ Failed to parse game message:', error, 'Raw data:', data.toString());
       }
     });
 
     // Handle errors
     newPeer.on('error', (error) => {
       console.error('❌ Peer connection error:', error);
-      setConnectionError(`Peer error: ${error.message}`);
+      console.error('Error type:', error.name);
+      console.error('Error code:', error.code);
+      
+      // Handle specific error types
+      if (error.message && error.message.includes('reading')) {
+        console.error('🔍 Stream/track reading error - possible cleanup issue');
+        setConnectionError('Video connection interrupted');
+      } else {
+        setConnectionError(`Peer error: ${error.message || 'Connection failed'}`);
+      }
     });
 
     // Handle close
@@ -258,6 +389,14 @@ const useSimplePeer = (username: string) => {
       case 'BLINK':
         setLastBlinkWinner('You Win!');
         break;
+      case 'blink':
+        // Handle optimal blink events (lightweight)
+        console.log('📨 Received optimal blink event:', message.isBlinking ? '😑' : '👁️');
+        // Forward to optimal blink system if available
+        if (message.isBlinking !== undefined && message.timestamp && message.playerId) {
+          // This will be handled by the optimal blink hook
+        }
+        break;
       case 'USER_INFO':
         if (message.payload?.username) {
           setOpponent(prev => prev ? {...prev, username: message.payload.username} : null);
@@ -281,10 +420,46 @@ const useSimplePeer = (username: string) => {
         setAntiCheatViolation(message.payload?.reason || 'Unknown violation');
         setLastBlinkWinner('You Lose - Anti-cheat violation');
         break;
+      case 'EYE_DATA':
+        // Handle real-time eye data from opponent (replaces video streaming)
+        if (message.payload) {
+          const eyeData: EyeData = message.payload;
+          const latency = Date.now() - eyeData.timestamp;
+          console.log('👁️ Received eye data, latency:', latency, 'ms', eyeData);
+          setRemoteEyeData(eyeData);
+        }
+        break;
+      case 'HYBRID_BLINK':
+        // Handle hybrid blink events from opponent (lightweight transmission)
+        if (message.payload) {
+          const blinkEvent = message.payload;
+          console.log('👁️ Received hybrid blink event:', blinkEvent.isBlinking ? '😑' : '👁️', `(${Date.now() - blinkEvent.timestamp}ms ago)`, 'from:', blinkEvent.playerId);
+          // Dispatch event for hybrid blink system
+          console.log('🔔 Dispatching hybridBlinkReceived event:', blinkEvent);
+          window.dispatchEvent(new CustomEvent('hybridBlinkReceived', { 
+            detail: blinkEvent 
+          }));
+          console.log('✅ Event dispatched successfully');
+        } else {
+          console.log('⚠️ Received HYBRID_BLINK message with no payload');
+        }
+        break;
+      case 'OPTIMIZED_BLINK':
+        // Handle optimized blink events from opponent
+        if (message.payload) {
+          console.log('👁️ Received optimized blink event:', message.payload);
+          // This will be handled by the blink transmission hook
+          window.dispatchEvent(new CustomEvent('optimizedBlinkReceived', { 
+            detail: message.payload 
+          }));
+        }
+        break;
       default:
         console.log('Unknown message type:', message.type);
     }
   }, []);
+
+  // Note: Canvas streaming removed to reduce video lag
 
   // Send game data
   const sendData = useCallback((message: GameMessage) => {
@@ -299,6 +474,80 @@ const useSimplePeer = (username: string) => {
       console.warn('⚠️ Cannot send data: peer not connected');
     }
   }, [isConnected]);
+
+  // Send eye data (optimized for low latency)
+  const sendEyeData = useCallback((eyeData: Omit<EyeData, 'timestamp' | 'playerId'>) => {
+    if (peerRef.current && isConnected) {
+      try {
+        const startTime = performance.now();
+        const data: GameMessage = {
+          type: 'EYE_DATA',
+          payload: {
+            ...eyeData,
+            timestamp: Date.now(),
+            playerId: username
+          }
+        };
+        peerRef.current.send(JSON.stringify(data));
+        const endTime = performance.now();
+        if (endTime - startTime > 2) {
+          console.log('👁️ Eye data sent in', endTime - startTime, 'ms');
+        }
+      } catch (error) {
+        console.error('❌ Failed to send eye data:', error);
+      }
+    } else {
+      console.warn('⚠️ Cannot send eye data: peer not connected', { 
+        hasPeer: !!peerRef.current, 
+        isConnected 
+      });
+    }
+  }, [isConnected, username]);
+
+  // Send hybrid blink data (ultra-lightweight transmission)
+  const sendHybridBlink = useCallback((isBlinking: boolean, confidence: number = 1.0, isFaceVisible?: boolean, landmarkCount?: number, faceCenter?: { x: number; y: number }, faceBounds?: { width: number; height: number }) => {
+    const blinkData = {
+      isBlinking,
+      confidence,
+      timestamp: Date.now(),
+      playerId: username,
+      isFaceVisible: isFaceVisible ?? true, // Default to true if not provided
+      landmarkCount: landmarkCount ?? 0,
+      faceCenter: faceCenter ?? null, // Face center coordinates for smart tracking
+      faceBounds: faceBounds ?? null   // Face dimensions for smart tracking
+    };
+    
+
+    // TEMPORARY: Force Socket.IO fallback since SimplePeer data channel is broken
+    console.log('🔧 Forcing Socket.IO fallback due to SimplePeer data channel issues');
+
+    // Fallback to Socket.IO if SimplePeer data channel is broken
+    if (socketRef.current && opponent) {
+      try {
+        socketRef.current.emit('hybrid-blink', {
+          target: opponent.socketId,
+          data: blinkData
+        });
+        console.log('🔄 Socket.IO SENDING:', {
+          isBlinking: isBlinking ? '😑' : '👁️',
+          isFaceVisible: blinkData.isFaceVisible,
+          from: socketRef.current.id,
+          to: opponent.socketId,
+          fullData: blinkData
+        });
+      } catch (error) {
+        console.error('❌ Failed to send hybrid blink via Socket.IO:', error);
+      }
+    } else {
+      console.log('🚫 Cannot send hybrid blink - no connection available');
+      console.log('🔍 Debug: socketRef.current:', !!socketRef.current, 'opponent:', opponent);
+    }
+  }, [isConnected, username, opponent]);
+
+  // Debug opponent state changes
+  useEffect(() => {
+    console.log('🔍 Opponent state changed:', opponent);
+  }, [opponent]);
 
   // Create room
   const createRoom = useCallback(async (roomId: string) => {
@@ -403,6 +652,11 @@ const useSimplePeer = (username: string) => {
       localStreamRef.current = null;
     }
     
+    if (canvasStreamRef.current) {
+      canvasStreamRef.current.getTracks().forEach(track => track.stop());
+      canvasStreamRef.current = null;
+    }
+    
     setRemoteStream(null);
     setIsConnected(false);
     setOpponent(null);
@@ -414,12 +668,17 @@ const useSimplePeer = (username: string) => {
     hasCreatedRoomRef.current = false;
   }, []);
 
-  // Set up peer connection listener when socket is available
+  // Set up peer connection listener when socket becomes available
   useEffect(() => {
-    if (socketRef.current) {
+    if (socket && socketRef.current) {
       const handlePeerConnectionRequest = (data: any) => {
         console.log('🔗 Server requested peer connection to:', data.targetSocketId);
-        createPeer(true, data.targetSocketId);
+        console.log('🔗 Peer connection data:', data);
+        if (data.targetSocketId) {
+          createPeer(true, data.targetSocketId);
+        } else {
+          console.error('❌ No targetSocketId provided for peer connection');
+        }
       };
 
       socketRef.current.on('create-peer-connection', handlePeerConnectionRequest);
@@ -460,10 +719,15 @@ const useSimplePeer = (username: string) => {
     opponentFaceData,
     antiCheatViolation,
     
+    // Real-time eye data
+    remoteEyeData,
+    
     // Actions
     createRoom,
     joinRoom,
     sendData,
+    sendEyeData,
+    sendHybridBlink,
     cleanup
   };
 };

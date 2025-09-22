@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import WelcomeScreen from './components/WelcomeScreen';
 import GameScreen from './components/GameScreen';
+import OptimalGameScreen from './components/OptimalGameScreen';
 import GlobalQueueScreen from './components/GlobalQueueScreen';
 import { GameMode } from './types';
 
@@ -11,6 +12,7 @@ const App: React.FC = () => {
     const [isJoining, setIsJoining] = useState<boolean>(false);
     const [isHost, setIsHost] = useState<boolean>(false);
     const [globalMatchData, setGlobalMatchData] = useState<any>(null);
+    const [useOptimalMode, setUseOptimalMode] = useState<boolean>(false);
 
     // Check URL for room parameter on app load
     useEffect(() => {
@@ -27,6 +29,12 @@ const App: React.FC = () => {
         console.log('🚀 App handleStartGame called:', { mode, user, id, isCreating });
         setGameMode(mode);
         setUsername(user);
+        
+        // Detect hybrid mode from room ID
+        if (id && id.startsWith('HYBRID')) {
+            setUseOptimalMode(true);
+            console.log('🔬 Enabling hybrid optimal mode for room:', id);
+        }
         
         if (mode === GameMode.Multiplayer) {
             if (id) {
@@ -49,6 +57,7 @@ const App: React.FC = () => {
         setIsJoining(false);
         setIsHost(false);
         setGlobalMatchData(null);
+        setUseOptimalMode(false);
         
         // Clean up URL when exiting
         window.history.pushState({}, document.title, window.location.pathname);
@@ -99,6 +108,7 @@ const App: React.FC = () => {
                 onExit={handleExitGame} 
                 isHost={isHost}
                 globalMatchData={globalMatchData}
+                useOptimalMode={useOptimalMode}
             />
         );
     };

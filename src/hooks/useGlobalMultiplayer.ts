@@ -79,7 +79,7 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
     updateState({ connectionStatus: 'Connecting...' });
 
     const socket = io('http://localhost:3001', {
-      transports: ['websocket', 'polling'],
+      transports: ['polling'], // Use polling only to avoid WebSocket 400 errors
       autoConnect: true,
       timeout: 5000,
       reconnection: true,
@@ -119,9 +119,19 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
         type: error.type,
         description: error.description
       });
+      
+      let errorMessage = 'Connection failed';
+      if (error.message) {
+        errorMessage = `Connection failed: ${error.message}`;
+      } else if (error.type === 'TransportError') {
+        errorMessage = 'Network connection failed. Please check your internet connection.';
+      } else if (error.type === 'timeout') {
+        errorMessage = 'Connection timeout. Server may be unavailable.';
+      }
+      
       updateState({ 
-        error: `Connection failed: ${error.message || 'Unknown error'}`,
-        connectionStatus: `Connection failed: ${error.type || 'Unknown'}`,
+        error: errorMessage,
+        connectionStatus: 'Connection failed',
         isConnected: false,
       });
     });
@@ -160,13 +170,28 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
     });
 
     // Match handlers
+    socket.on('global-match-pairing', (pairingData: any) => {
+      console.log('🔗 Players paired, connecting...', pairingData);
+      updateState({ 
+        isInQueue: false, 
+        queueStatus: `Opponent found: ${pairingData.opponent.username}`,
+        connectionStatus: 'Connecting to opponent...',
+      });
+    });
+
     socket.on('global-match-found', (matchData: GlobalMatch) => {
-      console.log('🎯 Global match found:', matchData);
+      console.log('🎯 Global match ready:', matchData);
+      console.log('🔍 Match data details:', {
+        matchId: matchData.matchId,
+        isHost: matchData.isHost,
+        roomReady: matchData.roomReady,
+        opponent: matchData.opponent
+      });
       updateState({ 
         isInQueue: false, 
         queueStatus: null,
         currentMatch: matchData,
-        connectionStatus: `Match found - ${matchData.isHost ? 'Host' : 'Guest'}`,
+        connectionStatus: `Match ready - ${matchData.isHost ? 'Host' : 'Guest'}`,
       });
     });
 
@@ -191,7 +216,7 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
       // This will be handled by the existing WebRTC system
     });
 
-  }, [updateState, state.playerStats]);
+  }, [updateState]); // Removed state.playerStats dependency to prevent recreation
 
   const joinGlobalQueue = useCallback((username: string) => {
     if (!socketRef.current?.connected) {
@@ -301,7 +326,7 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect]);
+  }, []); // Empty dependency array to run only once on mount
 
   return {
     ...state,

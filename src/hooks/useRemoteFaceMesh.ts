@@ -131,6 +131,8 @@ const useRemoteFaceMesh = (
 
     useEffect(() => {
         if (!videoRef.current) return;
+        
+        let mounted = true;
 
         const faceMesh = new (window as any).FaceMesh({
             locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
@@ -145,12 +147,16 @@ const useRemoteFaceMesh = (
         
         faceMesh.onResults(onResults);
         faceMeshRef.current = faceMesh;
-        setIsReady(true);
+        
+        if (mounted) {
+            setIsReady(true);
+        }
 
         return () => {
+            mounted = false;
             stopProcessing();
         };
-    }, [onResults, videoRef, stopProcessing]);
+    }, [videoRef]); // Only depend on videoRef, not the callback functions
 
     // Auto-start processing when video is ready
     useEffect(() => {

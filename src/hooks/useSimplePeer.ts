@@ -106,13 +106,17 @@ const useSimplePeer = (username: string) => {
         // For global matches, we need to set opponent data when connected
         // Send our username to the opponent
         if (username && newPeer.connected) {
+          console.log('📤 Attempting to send USER_INFO message...');
           try {
             const message = { type: 'USER_INFO', payload: { username } };
+            console.log('📤 USER_INFO message content:', message);
             newPeer.send(JSON.stringify(message));
-            console.log('📤 Sent USER_INFO message:', message);
+            console.log('✅ USER_INFO message sent successfully');
           } catch (error) {
             console.error('❌ Failed to send USER_INFO:', error);
           }
+        } else {
+          console.log('⚠️ Cannot send USER_INFO - missing username or peer not connected');
         }
       });
       

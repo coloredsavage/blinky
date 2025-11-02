@@ -154,12 +154,23 @@ const useSimplePeer = (username: string) => {
       });
 
       newPeer.on('data', (peerData) => {
+        console.log('📨 ========== RECEIVED PEER DATA ==========');
+        console.log('📨 Raw peer data:', peerData);
+        console.log('📨 Data type:', typeof peerData);
+        console.log('📨 Data length:', peerData.length);
+        
         try {
-          const message = JSON.parse(peerData.toString());
+          const messageString = peerData.toString();
+          console.log('📨 Parsed message string:', messageString);
+          const message = JSON.parse(messageString);
+          console.log('📨 Parsed message object:', message);
           handleGameMessage(message);
+          console.log('✅ Game message handled successfully');
         } catch (error) {
           console.error('❌ Failed to parse game message:', error);
+          console.error('❌ Error details:', error);
         }
+        console.log('📨 ========================================');
       });
 
       newPeer.on('error', (error) => {

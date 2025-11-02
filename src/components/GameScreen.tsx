@@ -3,6 +3,7 @@ import { GameMode, GameStatus } from '../types';
 import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
+import useRemoteFaceMesh from '../hooks/useRemoteFaceMesh'; // NEW
 import useSimplePeer from '../hooks/useSimplePeer';
 import useGlobalMultiplayer from '../hooks/useGlobalMultiplayer';
 import useDistractions from '../hooks/useDistractions';
@@ -41,9 +42,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const [isMyReady, setIsMyReady] = useState(false);
     const [gameStartTime, setGameStartTime] = useState<number | null>(null);
 
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const videoRef = useRef<HTMLVideoElement | null>(null);
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+    const remoteCanvasRef = useRef<HTMLCanvasElement | null>(null); // NEW
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const bothEyesClosedStart = useRef<number | null>(null);
     
@@ -59,6 +61,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         lightingQuality,
         startFaceMesh, 
     } = useFaceMesh(videoRef, canvasRef);
+    
+    // NEW: Remote face mesh hook for opponent video cropping
+    const {
+        isReady: remoteFaceMeshReady,
+        hasFace: opponentHasFace
+    } = useRemoteFaceMesh(remoteVideoRef, remoteCanvasRef);
     
     // Room-based multiplayer hook
     const { 
@@ -107,7 +115,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         triggerEmailModal
     } = useEmailCapture(currentSession || session, score, gameStatus);
     
-    console.log('🎮 GameScreen render - Game status:', gameStatus, 'GameStatus.GameOver:', GameStatus.GameOver, 'Start time:', gameStartTime, 'Active distractions:', activeDistractions.length);
+    // Removed noisy render log
 
     // Ensure remote video gets the stream
     useEffect(() => {
@@ -249,14 +257,28 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [gameStatus]);
     
     useEffect(() => {
+        console.log('🎮 Game start conditions check:', {
+            mode,
+            isMyReady,
+            isOpponentReady,
+            gameStatus,
+            opponentData,
+            isConnected,
+            connectionStatus,
+            opponent,
+            globalMatch
+        });
+
         if (mode === GameMode.Multiplayer && isMyReady && isOpponentReady && gameStatus === GameStatus.Idle) {
+            console.log('🎯 Starting multiplayer game countdown!');
             startCountdown();
         }
         // Global mode will auto-start when both players are ready (handled via global multiplayer system)
         if (mode === GameMode.Global && isMyReady && opponentData && gameStatus === GameStatus.Idle) {
+            console.log('🎯 Starting global game countdown!');
             startCountdown();
         }
-    }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown, opponentData]);
+    }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown, opponentData, isConnected, connectionStatus, opponent, globalMatch]);
 
     useEffect(() => {
         if (gameStatus !== GameStatus.Playing || !faceMeshReady) return;
@@ -505,9 +527,11 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         <div className="video-crop-wrapper">
                             <VideoFeed 
                                 videoRef={remoteVideoRef} 
+                                canvasRef={remoteCanvasRef}  // CHANGED: Now has canvas
                                 username={opponentData?.username || 'Waiting...'} 
                                 isMuted={false} 
                                 remoteStream={remoteStream} 
+                                isRemote={true}  // NEW: Flag as remote
                             />
                         </div>
                     </div>

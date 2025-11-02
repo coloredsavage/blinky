@@ -394,7 +394,8 @@ const useSimplePeer = (username: string) => {
         break;
       case 'USER_INFO':
         if (message.payload?.username) {
-          setOpponent(prev => prev ? {...prev, username: message.payload.username} : null);
+          console.log('👤 Setting opponent from USER_INFO:', message.payload.username);
+          setOpponent({ username: message.payload.username, socketId: 'global' });
         }
         break;
       default:

@@ -40,7 +40,7 @@ const useSimplePeer = (username: string) => {
       },
       {
         urls: "turn:openrelay.metered.ca:443",
-        username: "openrelayproject", 
+        username: "openrelayproject",
         credential: "openrelayproject"
       },
       {
@@ -50,6 +50,104 @@ const useSimplePeer = (username: string) => {
       }
     ]
   };
+
+  // Set up peer connection listener - stable function that won't cause re-renders
+  const registerPeerListener = useCallback((socket: Socket) => {
+    const handlePeerConnectionRequest = (data: any) => {
+      console.log('🔗 ========== SERVER REQUESTED PEER CONNECTION ==========');
+      console.log('🔗 Target socket ID:', data.targetSocketId);
+      console.log('🔗 Creating peer as INITIATOR');
+
+      // Create peer directly using refs to avoid dependency issues
+      if (!localStreamRef.current) {
+        console.error('❌ No local stream available');
+        return;
+      }
+
+      console.log(`🔗 Creating peer connection (initiator: true)`);
+      console.log('📹 Local stream for peer:', localStreamRef.current);
+      console.log('📹 Local stream tracks:', localStreamRef.current.getTracks().map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        id: t.id
+      })));
+
+      const newPeer = new SimplePeer({
+        initiator: true,
+        stream: localStreamRef.current,
+        config: rtcConfig,
+        trickle: true
+      });
+
+      console.log('🔗 SimplePeer instance created, waiting for events...');
+
+      // Set up all peer event handlers
+      newPeer.on('signal', (signalData) => {
+        console.log('📡 Sending signal:', signalData.type);
+        if (socketRef.current && data.targetSocketId) {
+          if (signalData.type === 'offer') {
+            socketRef.current.emit('webrtc-offer', { offer: signalData, target: data.targetSocketId });
+          } else if (signalData.type === 'answer') {
+            socketRef.current.emit('webrtc-answer', { answer: signalData, target: data.targetSocketId });
+          } else {
+            socketRef.current.emit('webrtc-ice-candidate', { candidate: signalData, target: data.targetSocketId });
+          }
+        }
+      });
+
+      newPeer.on('connect', () => {
+        console.log('✅ Peer connected successfully!');
+        setIsConnected(true);
+        setConnectionStatus('Connected to opponent');
+        setConnectionError(null);
+      });
+
+      newPeer.on('stream', (stream) => {
+        console.log('📹 ========== RECEIVED REMOTE STREAM ==========');
+        console.log('📹 Stream ID:', stream.id);
+        console.log('📹 Stream active:', stream.active);
+        console.log('📹 Stream tracks:', stream.getTracks().map(t => ({
+          kind: t.kind,
+          enabled: t.enabled,
+          readyState: t.readyState,
+          id: t.id,
+          label: t.label
+        })));
+        console.log('📹 Setting remote stream in state...');
+        setRemoteStream(stream);
+        console.log('📹 ========================================');
+      });
+
+      newPeer.on('data', (peerData) => {
+        try {
+          const message = JSON.parse(peerData.toString());
+          handleGameMessage(message);
+        } catch (error) {
+          console.error('❌ Failed to parse game message:', error);
+        }
+      });
+
+      newPeer.on('error', (error) => {
+        console.error('❌ Peer connection error:', error);
+        setConnectionError(`Peer error: ${error.message || 'Connection failed'}`);
+      });
+
+      newPeer.on('close', () => {
+        console.log('🔌 Peer connection closed');
+        setIsConnected(false);
+        setRemoteStream(null);
+      });
+
+      setPeer(newPeer);
+      peerRef.current = newPeer;
+
+      console.log('🔗 ===================================================');
+    };
+
+    console.log('[useSimplePeer] ✅ Registering create-peer-connection listener on socket');
+    socket.on('create-peer-connection', handlePeerConnectionRequest);
+  }, []); // Empty deps - stable function
 
   // Initialize socket connection
   const initializeSocket = useCallback(() => {
@@ -62,17 +160,27 @@ const useSimplePeer = (username: string) => {
     const newSocket = io('http://localhost:3001', {
       transports: ['websocket', 'polling'],
       timeout: 10000,
-      forceNew: true
+      forceNew: false // Allow reusing existing connection
     });
 
     console.log('🔌 Socket created, setting up event listeners...');
 
+    // Register peer listener IMMEDIATELY (not waiting for connect)
+    // This is critical for global matchmaking where server may send create-peer-connection before connect event
+    registerPeerListener(newSocket);
+
     newSocket.on('connect', () => {
       console.log('🔌 Connected to signaling server');
+      console.log('🔌 Socket ID:', newSocket.id);
       setConnectionStatus('Connected to server');
       setConnectionError(null);
       setSocket(newSocket);
       socketRef.current = newSocket;
+
+      // DEBUG: Listen for ALL events
+      newSocket.onAny((eventName, ...args) => {
+        console.log(`[Socket Event] ${eventName}:`, args);
+      });
     });
 
     newSocket.on('connection-confirmed', (data) => {
@@ -156,13 +264,22 @@ const useSimplePeer = (username: string) => {
     }
 
     console.log(`🔗 Creating peer connection (initiator: ${isInitiator})`);
-    
+    console.log('📹 Local stream for peer:', localStreamRef.current);
+    console.log('📹 Local stream tracks:', localStreamRef.current.getTracks().map(t => ({
+      kind: t.kind,
+      enabled: t.enabled,
+      readyState: t.readyState,
+      id: t.id
+    })));
+
     const newPeer = new SimplePeer({
       initiator: isInitiator,
       stream: localStreamRef.current,
       config: rtcConfig,
       trickle: true
     });
+
+    console.log('🔗 SimplePeer instance created, waiting for events...');
 
     // Handle signaling
     newPeer.on('signal', (data) => {
@@ -188,9 +305,19 @@ const useSimplePeer = (username: string) => {
 
     // Handle incoming stream
     newPeer.on('stream', (stream) => {
-      console.log('📹 Received remote stream:', stream);
-      console.log('📹 Stream tracks:', stream.getTracks());
+      console.log('📹 ========== RECEIVED REMOTE STREAM ==========');
+      console.log('📹 Stream ID:', stream.id);
+      console.log('📹 Stream active:', stream.active);
+      console.log('📹 Stream tracks:', stream.getTracks().map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        id: t.id,
+        label: t.label
+      })));
+      console.log('📹 Setting remote stream in state...');
       setRemoteStream(stream);
+      console.log('📹 ========================================');
     });
 
     // Handle data messages
@@ -380,23 +507,14 @@ const useSimplePeer = (username: string) => {
     hasCreatedRoomRef.current = false;
   }, []);
 
-  // Set up peer connection listener when socket is available
+  // Initialize socket early (on mount) to receive create-peer-connection events from global matchmaking
   useEffect(() => {
-    if (socketRef.current) {
-      const handlePeerConnectionRequest = (data: any) => {
-        console.log('🔗 Server requested peer connection to:', data.targetSocketId);
-        createPeer(true, data.targetSocketId);
-      };
-
-      socketRef.current.on('create-peer-connection', handlePeerConnectionRequest);
-
-      return () => {
-        if (socketRef.current) {
-          socketRef.current.off('create-peer-connection', handlePeerConnectionRequest);
-        }
-      };
+    // Initialize socket immediately so it's ready to receive events from global matchmaking
+    if (!socketRef.current) {
+      console.log('[useSimplePeer] Early socket initialization for global matchmaking');
+      initializeSocket();
     }
-  }, [socket, createPeer]);
+  }, [initializeSocket]);
 
   // Cleanup on unmount
   useEffect(() => {

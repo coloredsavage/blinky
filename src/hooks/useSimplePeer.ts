@@ -540,6 +540,17 @@ const useSimplePeer = (username: string) => {
     }
   }, [initializeSocket]);
 
+  // Debug logging for connection state changes
+  useEffect(() => {
+    console.log('🔗 useSimplePeer connection state changed:', {
+      isConnected,
+      connectionStatus,
+      opponent,
+      remoteStream: !!remoteStream,
+      connectionError
+    });
+  }, [isConnected, connectionStatus, opponent, remoteStream, connectionError]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {

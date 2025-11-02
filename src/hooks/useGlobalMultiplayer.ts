@@ -297,11 +297,13 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
   // Initialize connection on mount
   useEffect(() => {
     connect();
-    
+
+    // DON'T disconnect on unmount - we need the socket for WebRTC signaling
+    // The socket will be reused by useSimplePeer
     return () => {
-      disconnect();
+      // disconnect(); // Commented out to keep socket alive for WebRTC
     };
-  }, [connect, disconnect]);
+  }, [connect]);
 
   return {
     ...state,

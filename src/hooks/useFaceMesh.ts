@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
 import { LEFT_EYE_INDICES, RIGHT_EYE_INDICES } from '../constants';
+import { getEyesBoundingBox } from '../utils/faceDetection';
 
 // Declare MediaPipe globals from CDN
 declare const FaceMesh: any;
@@ -36,18 +37,6 @@ const getEAR = (landmarks: any[], eyeIndices: { [key: string]: number }) => {
     }
 };
 
-const getEyesBoundingBox = (landmarks: any[]) => {
-  const allIndices = [...Object.values(LEFT_EYE_INDICES), ...Object.values(RIGHT_EYE_INDICES)];
-  const points = allIndices.map(i => landmarks[i]).filter(Boolean);
-  if (points.length === 0) return null;
-  
-  let minX = Math.min(...points.map(p => p.x));
-  let maxX = Math.max(...points.map(p => p.x));
-  let minY = Math.min(...points.map(p => p.y));
-  let maxY = Math.max(...points.map(p => p.y));
-
-  return { minX, maxX, minY, maxY };
-};
 
 const analyzeLightingQuality = (videoElement: HTMLVideoElement): 'good' | 'poor' => {
   try {
@@ -170,7 +159,13 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
     
     useEffect(() => {
         if (!videoRef.current) return;
-        
+
+        // Prevent multiple instances
+        if (faceMeshRef.current) {
+            console.log('[useFaceMesh] MediaPipe already initialized, skipping');
+            return;
+        }
+
         const faceMesh = new (window as any).FaceMesh({
             locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
         });
@@ -185,8 +180,12 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
 
         const camera = new (window as any).Camera(videoRef.current, {
             onFrame: async () => {
-                if (videoRef.current) {
-                    await faceMesh.send({ image: videoRef.current });
+                if (videoRef.current && faceMeshRef.current) {
+                    try {
+                        await faceMesh.send({ image: videoRef.current });
+                    } catch (error) {
+                        console.error('[useFaceMesh] Error processing frame:', error);
+                    }
                 }
             },
             width: 640,
@@ -196,7 +195,15 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
         setIsReady(true);
 
         return () => {
+            console.log('[useFaceMesh] Cleanup: stopping camera and closing MediaPipe');
             stopFaceMesh();
+            if (faceMeshRef.current) {
+                faceMeshRef.current.close();
+                faceMeshRef.current = null;
+            }
+            if (cameraRef.current) {
+                cameraRef.current = null;
+            }
         };
     }, [onResults, videoRef, stopFaceMesh]);
 

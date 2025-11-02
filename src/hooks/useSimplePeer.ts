@@ -7,7 +7,7 @@ interface Opponent {
   socketId: string;
 }
 
-interface GameMessage {
+export interface GameMessage {
   type: 'READY_STATE' | 'BLINK' | 'GAME_STATE' | 'USER_INFO';
   payload?: any;
 }
@@ -79,6 +79,9 @@ const useSimplePeer = (username: string) => {
         config: rtcConfig,
         trickle: true
       });
+
+      // Debug: Check if data channel is available
+      console.log('🔗 Peer created with data channel configuration');
 
       console.log('🔗 SimplePeer instance created, waiting for events...');
 
@@ -405,7 +408,10 @@ const useSimplePeer = (username: string) => {
 
   // Handle game messages
   const handleGameMessage = useCallback((message: GameMessage) => {
-    console.log('🎮 Received game message:', message);
+    console.log('🎮 ========== RECEIVED GAME MESSAGE ==========');
+    console.log('🎮 Message type:', message.type);
+    console.log('🎮 Message payload:', message.payload);
+    console.log('🎮 Current opponent state:', opponent);
     
     switch (message.type) {
       case 'READY_STATE':
@@ -416,14 +422,20 @@ const useSimplePeer = (username: string) => {
         break;
       case 'USER_INFO':
         if (message.payload?.username) {
-          console.log('👤 Setting opponent from USER_INFO:', message.payload.username);
+          console.log('👤 ========== SETTING OPPONENT FROM USER_INFO ==========');
+          console.log('👤 Opponent username:', message.payload.username);
+          console.log('👤 Before setting opponent:', opponent);
           setOpponent({ username: message.payload.username, socketId: 'global' });
+          console.log('👤 After setting opponent - state will update on next render');
+        } else {
+          console.log('❌ USER_INFO message missing username:', message.payload);
         }
         break;
       default:
         console.log('Unknown message type:', message.type);
     }
-  }, []);
+    console.log('🎮 ===========================================');
+  }, [opponent]);
 
   // Send game data
   const sendData = useCallback((message: GameMessage) => {

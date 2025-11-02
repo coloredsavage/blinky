@@ -4,7 +4,7 @@ import VideoFeed from './VideoFeed';
 import useBestScore from '../hooks/useBestScore';
 import useFaceMesh from '../hooks/useFaceMesh';
 import useRemoteFaceMesh from '../hooks/useRemoteFaceMesh'; // NEW
-import useSimplePeer from '../hooks/useSimplePeer';
+import useSimplePeer, { GameMessage } from '../hooks/useSimplePeer';
 import useGlobalMultiplayer from '../hooks/useGlobalMultiplayer';
 import useDistractions from '../hooks/useDistractions';
 import useSession from '../hooks/useSession';
@@ -92,7 +92,28 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     // Determine which multiplayer system to use
     const isGlobalMode = mode === GameMode.Global;
     const multiplayerData = isGlobalMode ? globalMatchData : null;
-    const opponentData = isGlobalMode ? globalMatch?.opponent : opponent;
+    // Use globalMatchData (prop) as fallback if globalMatch (from hook) is null
+    const effectiveGlobalMatch = globalMatch || globalMatchData;
+    const opponentData = isGlobalMode ? effectiveGlobalMatch?.opponent : opponent;
+
+    // For Global mode, consider connected if we have remote stream
+    const effectiveIsConnected = isGlobalMode ? (!!remoteStream && !!effectiveGlobalMatch) : isConnected;
+
+    // Debug logging for connection status
+    useEffect(() => {
+        if (isGlobalMode) {
+            console.log('🔍 Global Mode Connection Debug:', {
+                remoteStream: !!remoteStream,
+                globalMatch: !!globalMatch,
+                globalMatchDataProp: !!globalMatchData,
+                effectiveGlobalMatch: !!effectiveGlobalMatch,
+                effectiveGlobalMatchData: effectiveGlobalMatch,
+                opponentData,
+                effectiveIsConnected,
+                isConnected
+            });
+        }
+    }, [isGlobalMode, remoteStream, globalMatch, globalMatchData, effectiveGlobalMatch, opponentData, effectiveIsConnected, isConnected]);
 
     // Initialize distraction system
     const {
@@ -332,7 +353,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
         if (mode === GameMode.Multiplayer || mode === GameMode.Global) {
             if (connectionError) return `Connection Error:\n${connectionError}`;
-            if (!isConnected) {
+            if (!effectiveIsConnected) {
                 if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) {
                     return mode === GameMode.Multiplayer 
                         ? `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`
@@ -433,10 +454,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && gameStatus === GameStatus.Idle) {
             return (
                 <div className="space-y-2">
-                    <button 
-                        className="btn-primary" 
-                        onClick={handleReadyClick} 
-                        disabled={isMyReady || !isConnected || !opponentData || !isFaceCentered || lightingQuality === 'poor' || !!connectionError}
+                    <button
+                        className="btn-primary"
+                        onClick={handleReadyClick}
+                        disabled={isMyReady || !effectiveIsConnected || !opponentData || !!connectionError}
                     >
                         {isMyReady ? 'Ready ✓' : 'Ready'}
                     </button>
@@ -464,7 +485,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         if (mode === GameMode.SinglePlayer) return null;
         
         const getStatusColor = () => {
-            if (isConnected && opponentData) return 'bg-green-500';
+            if (effectiveIsConnected && opponentData) return 'bg-green-500';
             if (connectionError) return 'bg-red-500';
             if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying') || connectionStatus.includes('Creating') || connectionStatus.includes('Joining')) return 'bg-yellow-500';
             return 'bg-gray-500';
@@ -475,8 +496,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 <div className="flex items-center justify-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
                     <span className="text-gray-400">
-                        {isConnected && opponentData 
-                            ? `Connected to ${opponentData.username}` 
+                        {effectiveIsConnected && opponentData
+                            ? `Connected to ${opponentData.username}`
                             : connectionStatus
                         }
                     </span>
@@ -677,6 +698,44 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         }}
                     >
                         Check Rooms
+                    </button>
+                    <button 
+                        className="btn-secondary text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700"
+                        onClick={() => {
+                            console.log('🧪 ========== USER_INFO TEST BUTTON CLICKED ==========');
+                            console.log('🧪 Testing USER_INFO message exchange...');
+                            console.log('🧪 Current connection state:', {
+                                isConnected,
+                                connectionStatus,
+                                opponent,
+                                remoteStream: !!remoteStream,
+                                connectionError
+                            });
+                            
+                            if (isConnected && connection) {
+                                console.log('📤 Attempting to send USER_INFO test message...');
+                                const testMessage: GameMessage = { 
+                                    type: 'USER_INFO', 
+                                    payload: { 
+                                        username: username,
+                                        test: true,
+                                        timestamp: Date.now()
+                                    } 
+                                };
+                                console.log('📤 Test message content:', testMessage);
+                                sendData(testMessage);
+                                console.log('✅ Test USER_INFO message sent!');
+                            } else {
+                                console.log('❌ Cannot send test message - not connected');
+                                console.log('❌ Connection state:', {
+                                    isConnected,
+                                    connection: !!connection,
+                                    connectionStatus
+                                });
+                            }
+                        }}
+                    >
+                        Test USER_INFO
                     </button>
                 </div>
             </div>

@@ -97,6 +97,7 @@ const useSimplePeer = (username: string) => {
       });
 
       newPeer.on('connect', () => {
+        console.log('✅ ========== PEER CONNECT EVENT FIRED ==========');
         console.log('✅ Peer connected successfully!');
         console.log('🔗 Peer connection state:', newPeer.connected);
         setIsConnected(true);
@@ -110,14 +111,20 @@ const useSimplePeer = (username: string) => {
           try {
             const message = { type: 'USER_INFO', payload: { username } };
             console.log('📤 USER_INFO message content:', message);
+            console.log('📤 Peer connected state before send:', newPeer.connected);
             newPeer.send(JSON.stringify(message));
             console.log('✅ USER_INFO message sent successfully');
+            console.log('📤 Peer connected state after send:', newPeer.connected);
           } catch (error) {
             console.error('❌ Failed to send USER_INFO:', error);
+            console.error('❌ Error details:', error);
           }
         } else {
           console.log('⚠️ Cannot send USER_INFO - missing username or peer not connected');
+          console.log('⚠️ Username:', username);
+          console.log('⚠️ Peer connected:', newPeer.connected);
         }
+        console.log('✅ =============================================');
       });
       
       // Also check if peer is already connected (might happen quickly)

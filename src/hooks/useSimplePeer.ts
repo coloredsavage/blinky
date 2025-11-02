@@ -98,10 +98,33 @@ const useSimplePeer = (username: string) => {
 
       newPeer.on('connect', () => {
         console.log('✅ Peer connected successfully!');
+        console.log('🔗 Peer connection state:', newPeer.connected);
         setIsConnected(true);
         setConnectionStatus('Connected to opponent');
         setConnectionError(null);
+        
+        // For global matches, we need to set opponent data when connected
+        // Send our username to the opponent
+        if (username && newPeer.connected) {
+          try {
+            const message = { type: 'USER_INFO', payload: { username } };
+            newPeer.send(JSON.stringify(message));
+            console.log('📤 Sent USER_INFO message:', message);
+          } catch (error) {
+            console.error('❌ Failed to send USER_INFO:', error);
+          }
+        }
       });
+      
+      // Also check if peer is already connected (might happen quickly)
+      setTimeout(() => {
+        if (newPeer.connected && !isConnected) {
+          console.log('🔗 Peer was already connected, updating state');
+          setIsConnected(true);
+          setConnectionStatus('Connected to opponent');
+          setConnectionError(null);
+        }
+      }, 1000);
 
       newPeer.on('stream', (stream) => {
         console.log('📹 ========== RECEIVED REMOTE STREAM ==========');

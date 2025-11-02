@@ -105,14 +105,41 @@ io.on('connection', (socket) => {
     const globalMatch = activeGlobalMatches.get(roomId);
     if (globalMatch) {
       console.log('🌍 This is a global match, not creating traditional room');
-      // For global matches, just confirm the host connection
+      // For global matches, update the player's WebRTC socket ID
       const playerInMatch = globalMatch.players.find(p => p.username === username);
       if (playerInMatch) {
-        console.log('✅ Host confirmed for global match');
-        socket.emit('room-created', { 
-          roomId, 
-          users: globalMatch.players.map(p => ({ socketId: p.socketId, username: p.username }))
+        console.log(`✅ Host ${username} confirmed for global match`);
+
+        // Update this player's WebRTC socket ID (they're connecting via useSimplePeer now)
+        playerInMatch.webrtcSocketId = socket.id;
+        socket.join(roomId);
+
+        console.log(`📊 Global match ${roomId} WebRTC connection status:`,
+          globalMatch.players.map(p => ({ username: p.username, hasWebRTC: !!p.webrtcSocketId })));
+
+        socket.emit('room-created', {
+          roomId,
+          users: globalMatch.players.map(p => ({ socketId: p.webrtcSocketId || p.socketId, username: p.username }))
         });
+
+        // Check if both players now have WebRTC sockets connected
+        const bothPlayersConnected = globalMatch.players.every(p => p.webrtcSocketId);
+        if (bothPlayersConnected && !globalMatch.webrtcTriggered) {
+          console.log('🎯 BOTH PLAYERS CONNECTED VIA WEBRTC SOCKETS - Triggering peer connection');
+          const [host, guest] = globalMatch.players;
+          // Tell the host to create peer connection to guest
+          console.log(`📤 Telling ${host.username} (${host.webrtcSocketId}) to create peer connection to ${guest.username} (${guest.webrtcSocketId})`);
+          io.to(host.webrtcSocketId).emit('create-peer-connection', {
+            targetSocketId: guest.webrtcSocketId
+          });
+          // Mark as triggered to prevent duplicates
+          globalMatch.webrtcTriggered = true;
+        } else if (globalMatch.webrtcTriggered) {
+          console.log('⏭️  WebRTC already triggered for this match, skipping duplicate');
+        } else {
+          console.log('⏳ Waiting for other player to connect via WebRTC socket...');
+        }
+
         return;
       } else {
         console.log('❌ Player not part of this global match');
@@ -165,14 +192,41 @@ io.on('connection', (socket) => {
     const globalMatch = activeGlobalMatches.get(roomId);
     if (globalMatch) {
       console.log('🌍 Found global match:', globalMatch);
-      // For global matches, the WebRTC setup is already done, just confirm the connection
+      // For global matches, update the player's WebRTC socket ID
       const playerInMatch = globalMatch.players.find(p => p.username === username);
       if (playerInMatch) {
-        console.log('✅ Player is part of this global match');
-        socket.emit('room-joined', { 
-          roomId, 
-          users: globalMatch.players.map(p => ({ socketId: p.socketId, username: p.username }))
+        console.log(`✅ Guest ${username} is part of this global match`);
+
+        // Update this player's WebRTC socket ID (they're connecting via useSimplePeer now)
+        playerInMatch.webrtcSocketId = socket.id;
+        socket.join(roomId);
+
+        console.log(`📊 Global match ${roomId} WebRTC connection status:`,
+          globalMatch.players.map(p => ({ username: p.username, hasWebRTC: !!p.webrtcSocketId })));
+
+        socket.emit('room-joined', {
+          roomId,
+          users: globalMatch.players.map(p => ({ socketId: p.webrtcSocketId || p.socketId, username: p.username }))
         });
+
+        // Check if both players now have WebRTC sockets connected
+        const bothPlayersConnected = globalMatch.players.every(p => p.webrtcSocketId);
+        if (bothPlayersConnected && !globalMatch.webrtcTriggered) {
+          console.log('🎯 BOTH PLAYERS CONNECTED VIA WEBRTC SOCKETS - Triggering peer connection');
+          const [host, guest] = globalMatch.players;
+          // Tell the host to create peer connection to guest
+          console.log(`📤 Telling ${host.username} (${host.webrtcSocketId}) to create peer connection to ${guest.username} (${guest.webrtcSocketId})`);
+          io.to(host.webrtcSocketId).emit('create-peer-connection', {
+            targetSocketId: guest.webrtcSocketId
+          });
+          // Mark as triggered to prevent duplicates
+          globalMatch.webrtcTriggered = true;
+        } else if (globalMatch.webrtcTriggered) {
+          console.log('⏭️  WebRTC already triggered for this match, skipping duplicate');
+        } else {
+          console.log('⏳ Waiting for other player to connect via WebRTC socket...');
+        }
+
         return;
       } else {
         console.log('❌ Player not part of this global match');
@@ -294,7 +348,8 @@ io.on('connection', (socket) => {
           { socketId: opponent.socketId, username: opponent.username, elo: opponent.elo }
         ],
         startTime: Date.now(),
-        gameState: 'starting'
+        gameState: 'starting',
+        webrtcTriggered: false // Initialize the flag to prevent duplicate triggers
       });
       
       // Notify both players

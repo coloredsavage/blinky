@@ -30,9 +30,147 @@ const activeGlobalMatches = new Map(); // Ongoing global matches
 const playerStats = new Map(); // Player statistics and ELO
 const leaderboard = []; // Global leaderboard
 
+// Continuous run systems
+const continuousRuns = new Map(); // Active continuous runs
+const continuousQueue = new Map(); // Players waiting for continuous matches
+const nextOpponentCache = new Map(); // Pre-fetched next opponents for runs
+
+// Continuous run utility functions
+function generateRunId() {
+  return 'RUN_' + Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+function findContinuousOpponent(runId, playerSocketId, playerUsername, playerElo) {
+  const ELO_RANGE = 150; // Wider range for continuous matches
+  
+  // Check pre-fetched opponents first
+  const preFetched = nextOpponentCache.get(runId);
+  if (preFetched) {
+    console.log('📥 Using pre-fetched opponent for run:', runId);
+    nextOpponentCache.delete(runId);
+    return preFetched;
+  }
+  
+  // Search in continuous queue
+  for (const [queuedSocketId, queuedPlayer] of continuousQueue) {
+    if (queuedSocketId === playerSocketId) continue;
+    
+    const eloDifference = Math.abs(playerElo - queuedPlayer.elo);
+    if (eloDifference <= ELO_RANGE) {
+      return { socketId: queuedSocketId, ...queuedPlayer };
+    }
+  }
+  
+  return null;
+}
+
+function preFetchNextOpponent(runId, playerElo) {
+  // Look for potential next opponent in continuous queue
+  for (const [queuedSocketId, queuedPlayer] of continuousQueue) {
+    const eloDifference = Math.abs(playerElo - queuedPlayer.elo);
+    if (eloDifference <= 150) {
+      console.log('📥 Pre-fetching next opponent for run:', runId);
+      nextOpponentCache.set(runId, { socketId: queuedSocketId, ...queuedPlayer });
+      return true;
+    }
+  }
+  return false;
+}
+
 // ELO rating system constants
 const INITIAL_ELO = 1000;
 const K_FACTOR = 32;
+
+// Anti-cheat validation constants
+const MAX_BLINK_FREQUENCY = 5; // Max blinks per second
+const MIN_GAME_DURATION = 1000; // Minimum game duration in ms
+const MAX_GAME_DURATION = 300000; // Maximum game duration in ms (5 minutes)
+const SUSPICIOUS_PATTERN_THRESHOLD = 3; // Number of suspicious patterns before flagging
+
+// Anti-cheat tracking
+const playerBlinkHistory = new Map(); // Track blink frequency per player
+const suspiciousPlayers = new Map(); // Track suspicious behavior patterns
+
+// Anti-cheat validation functions
+function validateBlinkFrequency(playerSocketId, timestamp) {
+  if (!playerBlinkHistory.has(playerSocketId)) {
+    playerBlinkHistory.set(playerSocketId, []);
+  }
+  
+  const blinks = playerBlinkHistory.get(playerSocketId);
+  blinks.push(timestamp);
+  
+  // Keep only last 10 seconds of blink history
+  const tenSecondsAgo = Date.now() - 10000;
+  const recentBlinks = blinks.filter(blinkTime => blinkTime > tenSecondsAgo);
+  playerBlinkHistory.set(playerSocketId, recentBlinks);
+  
+  // Check if blink frequency is suspicious
+  if (recentBlinks.length > MAX_BLINK_FREQUENCY * 10) { // 10-second window
+    console.log(`🚨 Suspicious blink frequency detected for ${playerSocketId}: ${recentBlinks.length} blinks in 10s`);
+    flagSuspiciousBehavior(playerSocketId, 'high_blink_frequency');
+    return false;
+  }
+  
+  return true;
+}
+
+function validateGameDuration(gameTime) {
+  if (gameTime < MIN_GAME_DURATION || gameTime > MAX_GAME_DURATION) {
+    console.log(`🚨 Suspicious game duration: ${gameTime}ms`);
+    return false;
+  }
+  return true;
+}
+
+function validateGameResult(result, gameTime, winner) {
+  // Basic validation
+  if (!winner || !gameTime || typeof gameTime !== 'number') {
+    console.log('🚨 Invalid game result format');
+    return false;
+  }
+  
+  // Validate game duration
+  if (!validateGameDuration(gameTime)) {
+    return false;
+  }
+  
+  // Check for impossible win times (too fast)
+  if (gameTime < 500) { // Less than 0.5 seconds
+    console.log(`🚨 Suspiciously fast win: ${gameTime}ms`);
+    return false;
+  }
+  
+  return true;
+}
+
+function flagSuspiciousBehavior(playerSocketId, reason) {
+  if (!suspiciousPlayers.has(playerSocketId)) {
+    suspiciousPlayers.set(playerSocketId, []);
+  }
+  
+  const behaviors = suspiciousPlayers.get(playerSocketId);
+  behaviors.push({
+    timestamp: Date.now(),
+    reason,
+    severity: 'medium'
+  });
+  
+  console.log(`🚨 Flagged suspicious behavior for ${playerSocketId}: ${reason}`);
+  
+  // If too many suspicious behaviors, take action
+  if (behaviors.length >= SUSPICIOUS_PATTERN_THRESHOLD) {
+    console.log(`🚨 Multiple suspicious behaviors detected for ${playerSocketId}, taking action`);
+    // In a production system, you might:
+    // - Temporarily ban the player
+    // - Reset their stats
+    // - Flag for manual review
+  }
+}
+
+function resetPlayerBlinkHistory(playerSocketId) {
+  playerBlinkHistory.delete(playerSocketId);
+}
 
 // Utility functions for global multiplayer
 function generateGlobalMatchId() {
@@ -311,10 +449,53 @@ io.on('connection', (socket) => {
 
   socket.on('webrtc-ice-candidate', (data) => {
     console.log(`🧊 Relaying ICE candidate from ${socket.id} to ${data.target}`);
-    socket.to(data.target).emit('webrtc-ice-candidate', { 
-      candidate: data.candidate, 
-      from: socket.id 
+    socket.to(data.target).emit('webrtc-ice-candidate', {
+      candidate: data.candidate,
+      from: socket.id
     });
+  });
+
+  // Socket.IO fallback for game messages (when WebRTC data channel fails)
+  socket.on('ready-state', (data) => {
+    console.log(`🔄 Relaying ready-state from ${socket.id}`, data);
+    let foundRoom = false;
+
+    // Check traditional rooms first
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.users.some(u => u.socketId === socket.id)) {
+        foundRoom = true;
+        console.log(`✅ Found socket in traditional room ${roomId}`);
+        room.users.forEach(user => {
+          if (user.socketId !== socket.id) {
+            console.log(`📤 Relaying ready-state to ${user.socketId} (${user.username})`);
+            io.to(user.socketId).emit('ready-state', data);
+          }
+        });
+        break;
+      }
+    }
+
+    // If not found in traditional rooms, check global matches
+    if (!foundRoom) {
+      for (const [matchId, match] of activeGlobalMatches.entries()) {
+        const player = match.players.find(p => p.webrtcSocketId === socket.id);
+        if (player) {
+          foundRoom = true;
+          console.log(`✅ Found socket in global match ${matchId} (player: ${player.username})`);
+          // Relay to other player in the match
+          const otherPlayer = match.players.find(p => p.webrtcSocketId !== socket.id);
+          if (otherPlayer && otherPlayer.webrtcSocketId) {
+            console.log(`📤 Relaying ready-state to ${otherPlayer.webrtcSocketId} (${otherPlayer.username})`);
+            io.to(otherPlayer.webrtcSocketId).emit('ready-state', data);
+          }
+          break;
+        }
+      }
+    }
+
+    if (!foundRoom) {
+      console.log(`❌ Socket ${socket.id} not found in any room or match`);
+    }
   });
 
   // Global matchmaking handlers
@@ -406,10 +587,19 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Validate the result (basic anti-cheat)
-    if (!winner || !gameTime || gameTime < 1000 || gameTime > 300000) {
-      console.log('❌ Invalid game result detected');
+    // Enhanced anti-cheat validation
+    if (!validateGameResult(result, gameTime, winner)) {
+      console.log('🚨 Anti-cheat validation failed for game result');
       return;
+    }
+    
+    // Validate blink frequency for winner
+    const winnerPlayer = match.players.find(p => p.username === winner);
+    if (winnerPlayer) {
+      if (!validateBlinkFrequency(winnerPlayer.socketId, Date.now())) {
+        console.log(`🚨 Suspicious blink frequency for winner ${winner}`);
+        return;
+      }
     }
     
     // Update player statistics
@@ -471,6 +661,302 @@ io.on('connection', (socket) => {
     
     // Clean up match
     activeGlobalMatches.delete(matchId);
+  });
+
+  // Continuous multiplayer handlers
+  socket.on('continuous-run:join', (data) => {
+    console.log('🔥 SERVER RECEIVED continuous-run:join event from socket:', socket.id);
+    console.log('🔥 Event data:', data);
+    const { username, runId } = data;
+    console.log(`🏃 ${username} starting continuous run: ${runId}`);
+    
+    const playerStats = getOrCreatePlayerStats(username);
+    const playerData = {
+      username,
+      elo: playerStats.elo,
+      joinTime: Date.now()
+    };
+    
+    // Create continuous run record
+    continuousRuns.set(runId, {
+      runId,
+      player: {
+        socketId: socket.id,
+        username,
+        currentTime: 0,
+        opponentsDefeated: 0
+      },
+      currentOpponent: null,
+      nextOpponent: null,
+      state: 'searching',
+      matchHistory: [],
+      startTime: Date.now()
+    });
+    
+    // Add to continuous queue
+    continuousQueue.set(socket.id, playerData);
+    
+    // Try to find first opponent
+    const opponent = findContinuousOpponent(runId, socket.id, username, playerStats.elo);
+    
+    if (opponent) {
+      // First opponent found!
+      console.log(`🎯 First opponent found for ${username}: ${opponent.username}`);
+
+      // Remove BOTH players from queue (they're now in a match)
+      continuousQueue.delete(opponent.socketId);
+      continuousQueue.delete(socket.id);
+      
+      // Update run with opponent
+      const run = continuousRuns.get(runId);
+      run.currentOpponent = {
+        username: opponent.username,
+        socketId: opponent.socketId,
+        elo: opponent.elo
+      };
+      run.state = 'countdown';
+      
+      // Create match for WebRTC
+      const matchId = generateGlobalMatchId();
+      activeGlobalMatches.set(matchId, {
+        matchId,
+        players: [
+          { socketId: socket.id, username, elo: playerStats.elo },
+          { socketId: opponent.socketId, username: opponent.username, elo: opponent.elo }
+        ],
+        startTime: Date.now(),
+        gameState: 'starting',
+        webrtcTriggered: false,
+        isContinuous: true,
+        runId: runId
+      });
+
+      // Notify both players
+      socket.emit('continuous-run:new_opponent', {
+        opponent: { username: opponent.username, socketId: opponent.socketId, elo: opponent.elo },
+        yourCurrentTime: 0
+      });
+
+      io.to(opponent.socketId).emit('continuous-run:new_opponent', {
+        opponent: { username, socketId: socket.id, elo: playerStats.elo },
+        yourCurrentTime: 0
+      });
+
+      // Set up WebRTC signaling
+      console.log(`🔗 Setting up WebRTC for continuous match ${matchId}`);
+      console.log(`🔗 Player 1 (initiator): ${opponent.socketId} (${opponent.username})`);
+      console.log(`🔗 Player 2 (receiver): ${socket.id} (${username})`);
+
+      socket.join(matchId);
+      io.to(opponent.socketId).socketsJoin(matchId);
+
+      // Tell host to initiate peer connection
+      console.log(`📡 Emitting create-peer-connection to ${opponent.socketId}`);
+      io.to(opponent.socketId).emit('create-peer-connection', {
+        targetSocketId: socket.id,
+        matchId
+      });
+      console.log(`✅ WebRTC setup complete for continuous match ${matchId}`);
+
+      // Schedule game start timestamp broadcast after 3-second countdown
+      setTimeout(() => {
+        const gameStartTime = Date.now();
+        console.log(`🕐 Broadcasting game start timestamp for continuous match ${matchId}: ${gameStartTime}`);
+
+        // Broadcast synchronized game start timestamp to both players
+        socket.emit('continuous-run:game-start', {
+          runId,
+          startTimestamp: gameStartTime
+        });
+
+        io.to(opponent.socketId).emit('continuous-run:game-start', {
+          runId,
+          startTimestamp: gameStartTime
+        });
+      }, 3000); // After 3-second countdown
+      
+    } else {
+      // No immediate opponent, wait in queue
+      console.log(`⏳ ${username} waiting for first opponent in continuous run`);
+      socket.emit('continuous-run:searching_next', {
+        opponentsDefeated: 0,
+        currentTime: 0
+      });
+    }
+  });
+  
+  socket.on('continuous-run:find-next', (data) => {
+    const { runId, currentTime, opponentsDefeated } = data;
+    console.log(`🔍 Finding next opponent for run ${runId} (time: ${currentTime}ms, defeated: ${opponentsDefeated})`);
+    
+    const run = continuousRuns.get(runId);
+    if (!run) {
+      console.log('❌ Run not found:', runId);
+      return;
+    }
+    
+    // Update run state
+    run.player.currentTime = currentTime;
+    run.player.opponentsDefeated = opponentsDefeated;
+    run.state = 'transitioning';
+    
+    // Try to find next opponent
+    const opponent = findContinuousOpponent(runId, socket.id, run.player.username, run.player.elo);
+    
+    if (opponent) {
+      // Next opponent found!
+      console.log(`🎯 Next opponent found for ${run.player.username}: ${opponent.username}`);
+      
+      // Remove opponent from queue
+      continuousQueue.delete(opponent.socketId);
+      
+      // Update run with new opponent
+      run.currentOpponent = {
+        username: opponent.username,
+        socketId: opponent.socketId,
+        elo: opponent.elo
+      };
+      run.state = 'countdown';
+      
+      // Create match for WebRTC
+      const matchId = generateGlobalMatchId();
+      activeGlobalMatches.set(matchId, {
+        matchId,
+        players: [
+          { socketId: socket.id, username: run.player.username, elo: run.player.elo },
+          { socketId: opponent.socketId, username: opponent.username, elo: opponent.elo }
+        ],
+        startTime: Date.now(),
+        gameState: 'starting',
+        webrtcTriggered: false,
+        isContinuous: true,
+        runId: runId
+      });
+      
+      // Notify both players
+      socket.emit('continuous-run:new_opponent', {
+        opponent: { username: opponent.username, socketId: opponent.socketId, elo: opponent.elo },
+        yourCurrentTime: currentTime
+      });
+      
+      io.to(opponent.socketId).emit('continuous-run:new_opponent', {
+        opponent: { username: run.player.username, socketId: socket.id, elo: run.player.elo },
+        yourCurrentTime: 0 // New opponent starts fresh
+      });
+      
+      // Set up WebRTC signaling
+      socket.join(matchId);
+      io.to(opponent.socketId).socketsJoin(matchId);
+      
+      // Tell host to initiate peer connection
+      io.to(opponent.socketId).emit('create-peer-connection', {
+        targetSocketId: socket.id,
+        matchId
+      });
+
+      // Schedule game start timestamp broadcast after 3-second countdown
+      setTimeout(() => {
+        const gameStartTime = Date.now();
+        console.log(`🕐 Broadcasting game start timestamp for continuous match ${matchId}: ${gameStartTime}`);
+
+        // Broadcast synchronized game start timestamp to both players
+        socket.emit('continuous-run:game-start', {
+          runId,
+          startTimestamp: gameStartTime
+        });
+
+        io.to(opponent.socketId).emit('continuous-run:game-start', {
+          runId,
+          startTimestamp: gameStartTime
+        });
+      }, 3000); // After 3-second countdown
+      
+    } else {
+      // No opponent found yet, keep searching
+      console.log(`⏳ No opponent found yet for ${run.player.username}, continuing search`);
+      socket.emit('continuous-run:searching_next', {
+        opponentsDefeated: opponentsDefeated,
+        currentTime: currentTime
+      });
+      
+      // Try to pre-fetch next opponent
+      preFetchNextOpponent(runId, run.player.elo);
+    }
+  });
+  
+  socket.on('continuous-run:end', (data) => {
+    const { runId, reason } = data;
+    console.log(`🏁 Ending continuous run ${runId}: ${reason}`);
+    
+    const run = continuousRuns.get(runId);
+    if (!run) {
+      console.log('❌ Run not found for ending:', runId);
+      return;
+    }
+    
+    // Record final stats
+    if (reason === 'player_lost') {
+      const playerStats = getOrCreatePlayerStats(run.player.username);
+      playerStats.totalPlayTime += run.player.currentTime;
+      playerStats.gamesPlayed++;
+      
+      // Update longest run if applicable
+      if (run.player.currentTime > playerStats.longestStare) {
+        playerStats.longestStare = run.player.currentTime;
+        console.log(`🏆 New personal best for ${run.player.username}: ${run.player.currentTime}ms`);
+      }
+      
+      // Update leaderboard
+      updateLeaderboard();
+    }
+    
+    // Clean up
+    continuousRuns.delete(runId);
+    continuousQueue.delete(socket.id);
+    nextOpponentCache.delete(runId);
+    
+    console.log(`📊 Continuous run ended for ${run.player.username}: ${run.player.currentTime}ms, ${run.player.opponentsDefeated} opponents defeated`);
+  });
+  
+  socket.on('player:lost', (data) => {
+    const { runId, loserSocketId, gameTime } = data;
+    console.log(`💀 Player lost in continuous run ${runId}: ${loserSocketId}, Time: ${gameTime}ms`);
+    
+    const run = continuousRuns.get(runId);
+    if (!run) {
+      console.log('❌ Run not found for player loss:', runId);
+      return;
+    }
+    
+    // Anti-cheat validation for game time
+    if (gameTime && !validateGameDuration(gameTime)) {
+      console.log('🚨 Suspicious game duration in continuous run');
+      return;
+    }
+    
+    if (run.player.socketId === loserSocketId) {
+      // Player lost - run ends
+      console.log(`🏁 Player ${run.player.username} lost - ending run`);
+      socket.emit('continuous-run:end', { runId, reason: 'player_lost' });
+    } else if (run.currentOpponent && run.currentOpponent.socketId === loserSocketId) {
+      // Opponent lost - find next opponent
+      console.log(`🎯 Opponent ${run.currentOpponent.username} lost - finding next challenger`);
+      run.player.opponentsDefeated++;
+      run.state = 'transitioning';
+      
+      // Validate blink frequency for winner (the player who didn't lose)
+      if (!validateBlinkFrequency(socket.id, Date.now())) {
+        console.log(`🚨 Suspicious blink frequency for winner ${run.player.username}`);
+        return;
+      }
+      
+      // Notify player to find next opponent
+      socket.emit('continuous-run:find-next', {
+        runId,
+        currentTime: run.player.currentTime,
+        opponentsDefeated: run.player.opponentsDefeated
+      });
+    }
   });
 
   // Handle disconnect

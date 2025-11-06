@@ -74,12 +74,6 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
     return stats.rank ? `#${stats.rank}` : 'Unranked';
   };
 
-  const getEloColor = (elo: number) => {
-    if (elo >= 1200) return 'text-yellow-400'; // Gold
-    if (elo >= 1100) return 'text-purple-400'; // Purple
-    if (elo >= 1000) return 'text-blue-400';   // Blue
-    return 'text-gray-400'; // Gray
-  };
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -117,10 +111,10 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
         ) : playerStats ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
-              <div className={`text-2xl font-bold ${getEloColor(playerStats.elo)}`}>
-                {playerStats.elo}
+              <div className="text-2xl font-bold text-white">
+                {playerStats.gamesPlayed}
               </div>
-              <div className="text-sm text-gray-400">ELO Rating</div>
+              <div className="text-sm text-gray-400">Games Played</div>
             </div>
             
             <div className="text-center">
@@ -197,12 +191,30 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
         )}
       </div>
 
+      {/* Leaderboard */}
+      <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-6 mb-6">
+        <h2 className="text-xl font-bold text-white mb-4">Global Leaderboard</h2>
+        <div className="text-gray-400 text-center">
+          <div className="text-lg mb-2">🏆 Top Players Worldwide</div>
+          <div className="text-sm">Play 5+ games to appear on the leaderboard</div>
+          <div className="mt-4 text-sm text-gray-500">
+            • Compete for the highest win rate
+          </div>
+          <div className="text-sm text-gray-500">
+            • Climb the ranks with each victory
+          </div>
+          <div className="text-sm text-gray-500">
+            • Your current rank: {getRankDisplay(playerStats)}
+          </div>
+        </div>
+      </div>
+
       {/* Instructions */}
       <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">How It Works</h2>
         <div className="text-gray-400 space-y-2">
-          <div>• Players are matched based on similar ELO ratings</div>
-          <div>• Win to gain ELO points, lose to lose points</div>
+          <div>• Players are matched first-come-first-served for fast gameplay</div>
+          <div>• Win to improve your win rate and climb the leaderboard</div>
           <div>• Play 5+ games to get a global rank</div>
           <div>• The longer you stare without blinking, the better!</div>
         </div>

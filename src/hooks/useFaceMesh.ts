@@ -77,15 +77,27 @@ const analyzeLightingQuality = (videoElement: HTMLVideoElement): 'good' | 'poor'
   }
 };
 
-const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject<HTMLCanvasElement>) => {
+interface UseFaceMeshOptions {
+  blinkThreshold?: number;
+}
+
+const useFaceMesh = (
+  videoRef: RefObject<HTMLVideoElement>, 
+  canvasRef: RefObject<HTMLCanvasElement>,
+  options: UseFaceMeshOptions = {}
+) => {
+  const { blinkThreshold = 0.25 } = options;
     const [isReady, setIsReady] = useState(false);
     const [leftEar, setLeftEar] = useState(0.4);
     const [rightEar, setRightEar] = useState(0.4);
     const [isFaceCentered, setIsFaceCentered] = useState(false);
     const [lightingQuality, setLightingQuality] = useState<'good' | 'poor'>('good');
+    const [hasFace, setHasFace] = useState<boolean>(false);
+    const [faceDetectionTime, setFaceDetectionTime] = useState<number | null>(null);
     const faceMeshRef = useRef<any>(null);
     const cameraRef = useRef<any>(null);
     const lightingCheckRef = useRef<NodeJS.Timeout | null>(null);
+    const lastFaceDetectionRef = useRef<number>(0);
 
     const onResults = useCallback((results: any) => {
         if (!canvasRef.current || !videoRef.current) return;
@@ -100,6 +112,12 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
 
         if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
             const landmarks = results.multiFaceLandmarks[0];
+            
+            // Update face detection time
+            const currentTime = Date.now();
+            lastFaceDetectionRef.current = currentTime;
+            setHasFace(true);
+            setFaceDetectionTime(currentTime);
             
             // Cropped eyes view
             const box = getEyesBoundingBox(landmarks);
@@ -125,6 +143,7 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
             setRightEar(getEAR(landmarks, RIGHT_EYE_INDICES));
         } else {
             setIsFaceCentered(false);
+            setHasFace(false);
         }
         canvasCtx.restore();
     }, [canvasRef, videoRef]);
@@ -207,7 +226,19 @@ const useFaceMesh = (videoRef: RefObject<HTMLVideoElement>, canvasRef: RefObject
         };
     }, [onResults, videoRef, stopFaceMesh]);
 
-    return { isReady, leftEar, rightEar, isFaceCentered, lightingQuality, startFaceMesh, stopFaceMesh };
+    return { 
+        isReady, 
+        leftEar, 
+        rightEar, 
+        isFaceCentered, 
+        lightingQuality, 
+        hasFace,
+        faceDetectionTime,
+        lastFaceDetectionTime: lastFaceDetectionRef.current,
+        blinkThreshold,
+        startFaceMesh, 
+        stopFaceMesh 
+    };
 };
 
 export default useFaceMesh;

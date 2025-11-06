@@ -14,15 +14,23 @@ interface WelcomeScreenProps {
     isJoiningViaUrl: boolean;
     roomToJoin: string | null;
     session?: AnonymousSession | null;
+    onCalibrate?: () => void;
+    isCalibrated?: boolean;
+    onShowLeaderboard?: () => void;
 }
 
 const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ 
     onStartGame, 
     isJoiningViaUrl, 
     roomToJoin,
-    session 
+    session,
+    onCalibrate,
+    isCalibrated = false,
+    onShowLeaderboard
 }) => {
     const [showMultiplayerSetup, setShowMultiplayerSetup] = useState(false);
+    const [showGlobalModal, setShowGlobalModal] = useState(false);
+    const [globalUsername, setGlobalUsername] = useState('');
     const [username, setUsername] = useState('');
     const [roomIdInput, setRoomIdInput] = useState('');
     const [createdRoomId, setCreatedRoomId] = useState<string | null>(null);
@@ -65,26 +73,29 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     };
 
     const handleGlobalMultiplayerStart = () => {
-        console.log('🎯 Global multiplayer button clicked');
-        const playerName = prompt('Enter your username:');
-        console.log('📝 User entered username:', playerName);
+        console.log('🎯 Global matchmaking button clicked');
+        setShowGlobalModal(true);
+        setError('');
+    };
+
+    const handleJoinGlobalQueue = () => {
+        console.log('🎯 Joining global matchmaking queue');
         
-        if (!playerName) {
-            console.log('❌ No username provided');
+        if (!validateUsername(globalUsername)) {
+            console.log('❌ Username validation failed for:', globalUsername);
             return;
         }
         
-        const isValid = validateUsername(playerName);
-        console.log('✅ Username validation result:', isValid);
-        
-        if (!isValid) {
-            console.log('❌ Username validation failed for:', playerName);
-            alert(`Invalid username: ${error}`);
-            return;
-        }
-        
-        console.log('🚀 Starting global game with username:', playerName.trim());
-        onStartGame(GameMode.Global, playerName.trim());
+        console.log('🚀 Starting global matchmaking with username:', globalUsername.trim());
+        onStartGame(GameMode.Global, globalUsername.trim());
+        setShowGlobalModal(false);
+        setGlobalUsername('');
+    };
+
+    const handleGlobalUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''); // Only allow alphanumeric, underscore, dash
+        setGlobalUsername(value);
+        setError('');
     };
     
     const handleCreateRoom = () => {
@@ -164,7 +175,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     };
 
     return (
-        <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-8 text-center w-full max-w-lg mx-auto shadow-2xl relative">
+        <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 md:p-8 text-center w-full max-w-lg mx-auto shadow-2xl relative welcome-screen-mobile">
             {!showMultiplayerSetup ? (
                 <>
                     <h2 className="text-3xl font-bold mb-6 text-purple-300">Choose Your Challenge</h2>
@@ -205,17 +216,25 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                             🎯 Single Player
                         </button>
                         <button 
+                            onClick={handleGlobalMultiplayerStart} 
+                            className="btn-tertiary"
+                        >
+                            🌍 Global Matchmaking
+                        </button>
+                        <button 
                             onClick={handleMultiplayerClick} 
                             className="btn-secondary"
                         >
                             👥 Multiplayer
                         </button>
-                        <button 
-                            onClick={handleGlobalMultiplayerStart} 
-                            className="btn-tertiary"
-                        >
-                            🌍 Global Stare-Down
-                        </button>
+                        {onShowLeaderboard && (
+                            <button 
+                                onClick={onShowLeaderboard} 
+                                className="btn-quaternary"
+                            >
+                                🏆 View Leaderboards
+                            </button>
+                        )}
                     </div>
                 </>
             ) : (
@@ -408,6 +427,28 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     box-shadow: none;
                     opacity: 0.6;
                 }
+                .btn-quaternary { 
+                    background: linear-gradient(135deg, rgb(245 158 11), rgb(217 119 6));
+                    color: white;
+                    font-weight: bold;
+                    padding: 0.75rem 1.5rem;
+                    border-radius: 0.75rem;
+                    transition: all 0.3s ease;
+                    border: none;
+                    cursor: pointer;
+                    box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+                }
+                .btn-quaternary:hover:not(:disabled) { 
+                    transform: scale(1.02);
+                    box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+                }
+                .btn-quaternary:disabled {
+                    background: rgb(55 65 81);
+                    cursor: not-allowed;
+                    transform: scale(1);
+                    box-shadow: none;
+                    opacity: 0.6;
+                }
                 .btn-disabled { 
                     background: rgb(31 41 55);
                     color: rgb(107 114 128);
@@ -435,6 +476,128 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     color: rgb(156 163 175);
                 }
             `}</style>
+
+            {/* Global Matchmaking Modal */}
+            {showGlobalModal && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                }}>
+                    <div className="modal-content" style={{
+                        background: 'linear-gradient(135deg, rgb(17 24 39), rgb(31 41 55))',
+                        border: '2px solid rgb(55 65 81)',
+                        borderRadius: '1rem',
+                        padding: '2rem',
+                        width: '90%',
+                        maxWidth: '400px',
+                        textAlign: 'center',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                    }}>
+                        <h2 style={{
+                            fontSize: '1.875rem',
+                            fontWeight: 'bold',
+                            marginBottom: '1.5rem',
+                            color: 'rgb(34 197 94)'
+                        }}>
+                            🌍 Global Matchmaking
+                        </h2>
+                        
+                        <input
+                            type="text"
+                            placeholder="Enter your username"
+                            value={globalUsername}
+                            onChange={handleGlobalUsernameChange}
+                            style={{
+                                background: 'rgba(0, 0, 0, 0.3)',
+                                border: '2px solid rgb(55 65 81)',
+                                borderRadius: '0.75rem',
+                                padding: '0.75rem 1rem',
+                                color: 'white',
+                                width: '100%',
+                                marginBottom: '1rem',
+                                fontSize: '1rem'
+                            }}
+                            maxLength={20}
+                            autoFocus
+                        />
+                        
+                        {error && (
+                            <div style={{
+                                background: 'rgba(239, 68, 68, 0.2)',
+                                border: '1px solid rgb(239, 68, 68)',
+                                borderRadius: '0.5rem',
+                                padding: '0.75rem',
+                                color: 'rgb(254, 202, 202)',
+                                fontSize: '0.875rem',
+                                marginBottom: '1rem'
+                            }}>
+                                {error}
+                            </div>
+                        )}
+                        
+                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+                            <button 
+                                onClick={handleJoinGlobalQueue}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgb(34 197 94), rgb(16 185 129))',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                    padding: '0.75rem 1.5rem',
+                                    borderRadius: '0.75rem',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 4px 15px rgba(34, 197, 94, 0.3)',
+                                    transition: 'all 0.3s ease',
+                                    flex: 1
+                                }}
+                                onMouseOver={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(34, 197, 94, 0.4)';
+                                }}
+                                onMouseOut={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(34, 197, 94, 0.3)';
+                                }}
+                            >
+                                Join Queue
+                            </button>
+                            <button 
+                                onClick={() => setShowGlobalModal(false)}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgb(59 130 246), rgb(99 102 241))',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                    padding: '0.75rem 1.5rem',
+                                    borderRadius: '0.75rem',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 4px 15px rgba(59, 130, 246, 0.3)',
+                                    transition: 'all 0.3s ease',
+                                    flex: 1
+                                }}
+                                onMouseOver={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(59, 130, 246, 0.4)';
+                                }}
+                                onMouseOut={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(59, 130, 246, 0.3)';
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

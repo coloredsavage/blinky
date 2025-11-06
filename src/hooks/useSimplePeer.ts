@@ -22,6 +22,7 @@ const useSimplePeer = (username: string) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Not connected');
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isLocalStreamReady, setIsLocalStreamReady] = useState<boolean>(false);
   
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
@@ -53,15 +54,26 @@ const useSimplePeer = (username: string) => {
 
   // Set up peer connection listener - stable function that won't cause re-renders
   const registerPeerListener = useCallback((socket: Socket) => {
-    const handlePeerConnectionRequest = (data: any) => {
+    const handlePeerConnectionRequest = async (data: any) => {
       console.log('🔗 ========== SERVER REQUESTED PEER CONNECTION ==========');
       console.log('🔗 Target socket ID:', data.targetSocketId);
       console.log('🔗 Creating peer as INITIATOR');
 
-      // Create peer directly using refs to avoid dependency issues
+      // Wait for local stream if not ready (needed for continuous mode)
       if (!localStreamRef.current) {
-        console.error('❌ No local stream available');
-        return;
+        console.log('⏳ Local stream not ready, waiting...');
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds max
+        while (!localStreamRef.current && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+
+        if (!localStreamRef.current) {
+          console.error('❌ Timeout waiting for local stream');
+          return;
+        }
+        console.log('✅ Local stream ready after waiting');
       }
 
       console.log(`🔗 Creating peer connection (initiator: true)`);
@@ -267,6 +279,14 @@ const useSimplePeer = (username: string) => {
       setConnectionStatus(`Room error: ${data.message}`);
     });
 
+    // Socket.IO fallback for ready state (when WebRTC data channel fails)
+    newSocket.on('ready-state', (data) => {
+      console.log('📥 Received ready-state via Socket.IO:', data);
+      if (data.isReady !== undefined) {
+        setIsOpponentReady(data.isReady);
+      }
+    });
+
     newSocket.on('user-joined', (data) => {
       console.log('👤 User joined:', data);
       setOpponent({ username: data.username, socketId: data.socketId });
@@ -370,8 +390,11 @@ const useSimplePeer = (username: string) => {
 
     // Handle data messages
     newPeer.on('data', (data) => {
+      console.log('📨 ========== RECEIVED PEER DATA (GUEST) ==========');
+      console.log('📨 Raw data:', data);
       try {
         const message: GameMessage = JSON.parse(data.toString());
+        console.log('📨 Parsed message:', message);
         handleGameMessage(message);
       } catch (error) {
         console.error('❌ Failed to parse game message:', error);
@@ -400,6 +423,25 @@ const useSimplePeer = (username: string) => {
   // Handle WebRTC offer
   const handleOffer = useCallback(async (data: any) => {
     console.log('📡 Handling WebRTC offer');
+
+    // Wait for local stream if not ready (needed for continuous mode)
+    if (!localStreamRef.current) {
+      console.log('⏳ Local stream not ready, waiting...');
+      let attempts = 0;
+      const maxAttempts = 50; // 5 seconds max
+      while (!localStreamRef.current && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+
+      if (!localStreamRef.current) {
+        console.error('❌ Timeout waiting for local stream');
+        setConnectionError('Failed to initialize camera');
+        return;
+      }
+      console.log('✅ Local stream ready after waiting');
+    }
+
     const newPeer = createPeer(false, data.from);
     if (newPeer) {
       newPeer.signal(data.offer);
@@ -415,10 +457,19 @@ const useSimplePeer = (username: string) => {
     
     switch (message.type) {
       case 'READY_STATE':
+        console.log('📥 Received READY_STATE from opponent:', message.payload?.isReady);
         setIsOpponentReady(message.payload?.isReady || false);
         break;
       case 'BLINK':
+        console.log('📥 Received BLINK from opponent - You Win!');
         setLastBlinkWinner('You Win!');
+        break;
+      case 'GAME_STATE':
+        console.log('📥 Received GAME_STATE from opponent:', message.payload);
+        if (message.payload?.status === 'ended' && message.payload?.winner === 'opponent') {
+          console.log('🏆 Opponent won the game');
+          setLastBlinkWinner('You Win!');
+        }
         break;
       case 'USER_INFO':
         if (message.payload?.username) {
@@ -439,15 +490,36 @@ const useSimplePeer = (username: string) => {
 
   // Send game data
   const sendData = useCallback((message: GameMessage) => {
+    console.log('🔍 sendData called:', {
+      hasPeer: !!peerRef.current,
+      isConnected,
+      peerConnected: peerRef.current?.connected,
+      message
+    });
+
+    // Try WebRTC data channel first
+    let sentViaWebRTC = false;
     if (peerRef.current && isConnected) {
       try {
         peerRef.current.send(JSON.stringify(message));
-        console.log('📤 Sent game message:', message);
+        console.log('📤 Sent via WebRTC data channel:', message);
+        sentViaWebRTC = true;
       } catch (error) {
-        console.error('❌ Failed to send message:', error);
+        console.error('❌ Failed to send via WebRTC:', error);
       }
-    } else {
-      console.warn('⚠️ Cannot send data: peer not connected');
+    }
+
+    // Fallback to Socket.IO for critical messages (like READY_STATE)
+    if (!sentViaWebRTC || message.type === 'READY_STATE') {
+      if (socketRef.current) {
+        console.log('📤 Sending via Socket.IO fallback:', message);
+        socketRef.current.emit('ready-state', {
+          isReady: message.payload?.isReady,
+          type: message.type
+        });
+      } else {
+        console.warn('⚠️ Cannot send data: no connection available');
+      }
     }
   }, [isConnected]);
 
@@ -596,6 +668,37 @@ const useSimplePeer = (username: string) => {
     };
   }, [cleanup]);
 
+  // Reset game state (for continuous mode between matches)
+  const resetGameState = useCallback(() => {
+    console.log('🔄 Resetting game state for new match');
+    setLastBlinkWinner(null);
+    setIsOpponentReady(false);
+  }, []);
+
+  // Initialize local stream for continuous mode (without creating a room)
+  const initializeLocalStream = useCallback(async () => {
+    if (localStreamRef.current) {
+      console.log('📹 Local stream already initialized');
+      setIsLocalStreamReady(true);
+      return;
+    }
+
+    try {
+      console.log('📹 Initializing local stream for continuous mode...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false
+      });
+      localStreamRef.current = stream;
+      setIsLocalStreamReady(true);
+      console.log('✅ Local stream initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize local stream:', error);
+      setConnectionError('Failed to access camera');
+      setIsLocalStreamReady(false);
+    }
+  }, []);
+
   return {
     // Connection state
     connection: peer,
@@ -604,16 +707,20 @@ const useSimplePeer = (username: string) => {
     opponent,
     connectionError,
     connectionStatus,
-    
+    socket: socketRef.current,
+    isLocalStreamReady,
+
     // Game state
     isOpponentReady,
     lastBlinkWinner,
-    
+
     // Actions
     createRoom,
     joinRoom,
     sendData,
-    cleanup
+    cleanup,
+    resetGameState,
+    initializeLocalStream
   };
 };
 

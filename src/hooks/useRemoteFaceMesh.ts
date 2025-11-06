@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
-import { getEyesBoundingBox, LEFT_EYE_INDICES, RIGHT_EYE_INDICES } from '../utils/faceDetection';
+import { getEyesBoundingBox, LEFT_EYE_INDICES, RIGHT_EYE_INDICES, calculateEAR } from '../utils/faceDetection';
 
 const useRemoteFaceMesh = (
   videoRef: RefObject<HTMLVideoElement | null>,
@@ -7,6 +7,8 @@ const useRemoteFaceMesh = (
 ) => {
   const [isReady, setIsReady] = useState(false);
   const [hasFace, setHasFace] = useState(false);
+  const [leftEar, setLeftEar] = useState(0.4);
+  const [rightEar, setRightEar] = useState(0.4);
   const faceMeshRef = useRef<any>(null);
 
   const onResults = useCallback((results: any) => {
@@ -23,6 +25,12 @@ const useRemoteFaceMesh = (
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
       setHasFace(true);
       const landmarks = results.multiFaceLandmarks[0];
+
+      // Calculate Eye Aspect Ratios using shared function
+      const leftEyeEar = calculateEAR(landmarks, LEFT_EYE_INDICES);
+      const rightEyeEar = calculateEAR(landmarks, RIGHT_EYE_INDICES);
+      setLeftEar(leftEyeEar);
+      setRightEar(rightEyeEar);
 
       // Same eye cropping logic as local player
       const box = getEyesBoundingBox(landmarks);
@@ -116,7 +124,7 @@ const useRemoteFaceMesh = (
       }
     };
 
-    console.log('[useRemoteFaceMesh] Current video readyState:', videoRef.current.readyState);
+    console.log('[useRemoteFaceMesh] Current video readyState:', videoRef.current?.readyState);
     if (videoRef.current && videoRef.current.readyState >= 2) {
       console.log('[useRemoteFaceMesh] Video already ready, init now');
       initMediaPipe();
@@ -141,7 +149,7 @@ const useRemoteFaceMesh = (
     };
   }, [videoRef, onResults]);
 
-  return { isReady, hasFace };
+  return { isReady, hasFace, leftEar, rightEar };
 };
 
 export default useRemoteFaceMesh;

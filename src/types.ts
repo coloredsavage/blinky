@@ -3,6 +3,7 @@ export enum GameMode {
   SinglePlayer,
   Multiplayer,
   Global,
+  Continuous,
 }
 
 export interface PlayerState {

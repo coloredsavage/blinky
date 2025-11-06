@@ -3,7 +3,6 @@ import io, { Socket } from 'socket.io-client';
 
 export interface PlayerStats {
   username: string;
-  elo: number;
   gamesPlayed: number;
   wins: number;
   losses: number;
@@ -18,7 +17,6 @@ export interface GlobalMatch {
   matchId: string;
   opponent: {
     username: string;
-    elo: number;
   };
   isHost: boolean;
 }
@@ -39,6 +37,7 @@ export interface GlobalMultiplayerState {
 }
 
 export interface UseGlobalMultiplayerReturn extends GlobalMultiplayerState {
+  socket: Socket | null;
   joinGlobalQueue: (username: string) => void;
   leaveGlobalQueue: () => void;
   submitGameResult: (gameTime: number, winner: string) => void;
@@ -46,7 +45,7 @@ export interface UseGlobalMultiplayerReturn extends GlobalMultiplayerState {
   disconnect: () => void;
 }
 
-const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
+const useGlobalMultiplayer = (enabled: boolean = true): UseGlobalMultiplayerReturn => {
   const [state, setState] = useState<GlobalMultiplayerState>({
     isConnected: false,
     isInQueue: false,
@@ -86,7 +85,7 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
       maxReconnectionAttempts: 5,
-      forceNew: true
+      forceNew: false  // CHANGED: Allow socket reuse to prevent conflicts with useSimplePeer
     });
 
     socketRef.current = socket;
@@ -250,7 +249,6 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
         // New player - create default stats
         const defaultStats: PlayerStats = {
           username,
-          elo: 1000,
           gamesPlayed: 0,
           wins: 0,
           losses: 0,
@@ -294,19 +292,22 @@ const useGlobalMultiplayer = (): UseGlobalMultiplayerReturn => {
     });
   }, []);
 
-  // Initialize connection on mount
+  // Initialize connection on mount (only if enabled)
   useEffect(() => {
-    connect();
+    if (enabled) {
+      connect();
+    }
 
     // DON'T disconnect on unmount - we need the socket for WebRTC signaling
     // The socket will be reused by useSimplePeer
     return () => {
       // disconnect(); // Commented out to keep socket alive for WebRTC
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   return {
     ...state,
+    socket: socketRef.current,
     joinGlobalQueue,
     leaveGlobalQueue,
     submitGameResult,

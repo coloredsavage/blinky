@@ -1,0 +1,337 @@
+/* Mobile-First Responsive CSS for Blinky */
+
+/* Base mobile styles */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%; /* Prevent font scaling in landscape */
+  touch-action: manipulation; /* Disable double-tap zoom */
+}
+
+/* Mobile viewport optimization */
+#root {
+  min-height: 100vh;
+  min-height: -webkit-fill-available; /* iOS Safari */
+}
+
+/* Responsive breakpoints */
+/* Mobile: 0px - 767px (default) */
+/* Tablet: 768px - 1023px */
+/* Desktop: 1024px+ */
+
+/* Mobile-specific adjustments */
+@media (max-width: 767px) {
+  /* Prevent zoom on input focus */
+  input, textarea, select {
+    font-size: 16px; /* Prevents iOS zoom */
+  }
+  
+  /* Touch-friendly button sizes */
+  button {
+    min-height: 44px; /* Apple HIG minimum touch target */
+    min-width: 44px;
+    padding: 12px 16px;
+  }
+  
+  /* Adjust font sizes for mobile */
+  h1 {
+    font-size: 2rem !important;
+  }
+  
+  h2 {
+    font-size: 1.5rem !important;
+  }
+  
+  h3 {
+    font-size: 1.25rem !important;
+  }
+  
+  /* Container adjustments */
+  .container-mobile {
+    padding: 16px;
+    margin: 0 auto;
+    max-width: 100%;
+  }
+  
+  /* Stack elements vertically on mobile */
+  .stack-mobile {
+    flex-direction: column !important;
+  }
+  
+  /* Full-width elements on mobile */
+  .full-width-mobile {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  
+  /* Adjust spacing for mobile */
+  .spacing-mobile {
+    gap: 16px !important;
+    margin: 16px 0 !important;
+  }
+  
+  /* Hide elements that don't fit on mobile */
+  .hide-mobile {
+    display: none !important;
+  }
+  
+  /* Show elements only on mobile */
+  .show-mobile {
+    display: block !important;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .container-tablet {
+    padding: 24px;
+    margin: 0 auto;
+    max-width: 768px;
+  }
+  
+  .hide-tablet {
+    display: none !important;
+  }
+  
+  .show-tablet {
+    display: block !important;
+  }
+}
+
+/* Desktop adjustments */
+@media (min-width: 1024px) {
+  .container-desktop {
+    padding: 32px;
+    margin: 0 auto;
+    max-width: 1200px;
+  }
+  
+  .hide-desktop {
+    display: none !important;
+  }
+  
+  .show-desktop {
+    display: block !important;
+  }
+}
+
+/* Game-specific mobile optimizations */
+
+/* Video feed containers for mobile */
+.video-container-mobile {
+  width: 100% !important;
+  height: 40vh !important; /* Adjust height for mobile */
+  max-height: 300px !important;
+}
+
+/* Side-by-side video layout for mobile */
+@media (max-width: 767px) {
+  .video-grid-mobile {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+  
+  .video-grid-mobile .video-feed {
+    width: 100% !important;
+    height: 40vh !important;
+  }
+}
+
+/* Button groups for mobile */
+.button-group-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.button-group-mobile button {
+  width: 100%;
+}
+
+/* Form inputs for mobile */
+.input-mobile {
+  width: 100%;
+  padding: 16px;
+  font-size: 16px; /* Prevent iOS zoom */
+  border-radius: 8px;
+}
+
+/* Modal overlays for mobile */
+.modal-mobile {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-content-mobile {
+  background: #1f2937;
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Leaderboard mobile optimizations */
+.leaderboard-mobile {
+  font-size: 14px;
+}
+
+.leaderboard-item-mobile {
+  padding: 12px !important;
+  margin-bottom: 8px !important;
+}
+
+/* Game screen mobile layout */
+.game-screen-mobile {
+  padding: 16px !important;
+}
+
+.game-timer-mobile {
+  font-size: 2rem !important;
+  margin: 16px 0 !important;
+}
+
+/* Welcome screen mobile layout */
+.welcome-screen-mobile {
+  padding: 20px !important;
+  margin: 16px !important;
+}
+
+/* Camera permission handling */
+.camera-permission-mobile {
+  text-align: center;
+  padding: 32px 20px;
+}
+
+.camera-permission-mobile button {
+  margin: 16px 0;
+  width: 100%;
+}
+
+/* Loading states for mobile */
+.loading-mobile {
+  padding: 40px 20px;
+  text-align: center;
+}
+
+/* Touch interactions */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Prevent text selection on interactive elements */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Smooth scrolling for mobile */
+.smooth-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Safe area insets for notched devices */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-left {
+  padding-left: env(safe-area-inset-left);
+}
+
+.safe-area-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Performance optimizations for mobile */
+.performance-mobile {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000;
+}
+
+/* MediaPipe canvas optimization for mobile */
+.mediapipe-canvas-mobile {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Connection status for mobile */
+.connection-status-mobile {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+/* Mobile-specific utility classes */
+.text-mobile-sm {
+  font-size: 14px;
+}
+
+.text-mobile-base {
+  font-size: 16px;
+}
+
+.text-mobile-lg {
+  font-size: 18px;
+}
+
+.text-mobile-xl {
+  font-size: 20px;
+}
+
+.margin-mobile-sm {
+  margin: 8px;
+}
+
+.margin-mobile-base {
+  margin: 16px;
+}
+
+.margin-mobile-lg {
+  margin: 24px;
+}
+
+.padding-mobile-sm {
+  padding: 8px;
+}
+
+.padding-mobile-base {
+  padding: 16px;
+}
+
+.padding-mobile-lg {
+  padding: 24px;
+}

@@ -77,7 +77,10 @@ const useGlobalMultiplayer = (enabled: boolean = true): UseGlobalMultiplayerRetu
     console.log('🌍 Connecting to global multiplayer server...');
     updateState({ connectionStatus: 'Connecting...' });
 
-    const socket = io('http://localhost:3001', {
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+    console.log('🌍 Socket URL:', SOCKET_URL);
+
+    const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       timeout: 5000,
@@ -229,8 +232,9 @@ const useGlobalMultiplayer = (enabled: boolean = true): UseGlobalMultiplayerRetu
 
   const getPlayerStats = useCallback(async (username: string): Promise<PlayerStats | null> => {
     try {
+      const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
       console.log('🌍 Fetching player stats for:', username);
-      const response = await fetch(`http://localhost:3001/global/player/${username}`, {
+      const response = await fetch(`${SOCKET_URL}/global/player/${username}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

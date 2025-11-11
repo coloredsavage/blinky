@@ -9,7 +9,12 @@ const server = http.createServer(app);
 // Configure CORS for Socket.IO
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:3000"],
+    origin: [
+      "http://localhost:5173", 
+      "http://localhost:3000",
+      "https://blinky.vercel.app",
+      "https://blinky-react.vercel.app"
+    ],
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -487,6 +492,49 @@ io.on('connection', (socket) => {
           if (otherPlayer && otherPlayer.webrtcSocketId) {
             console.log(`📤 Relaying ready-state to ${otherPlayer.webrtcSocketId} (${otherPlayer.username})`);
             io.to(otherPlayer.webrtcSocketId).emit('ready-state', data);
+          }
+          break;
+        }
+      }
+    }
+
+      if (!foundRoom) {
+      console.log(`❌ Socket ${socket.id} not found in any room or match`);
+    }
+  });
+
+  // Game message handler (for BLINK, READY_STATE, etc.)
+  socket.on('game-message', (data) => {
+    console.log(`📨 Relaying game-message from ${socket.id}`, data);
+    let foundRoom = false;
+
+    // Check traditional rooms first
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.users.some(u => u.socketId === socket.id)) {
+        foundRoom = true;
+        console.log(`✅ Found socket in traditional room ${roomId}`);
+        room.users.forEach(user => {
+          if (user.socketId !== socket.id) {
+            console.log(`📤 Relaying game-message (${data.type}) to ${user.socketId} (${user.username})`);
+            io.to(user.socketId).emit('game-message', data);
+          }
+        });
+        break;
+      }
+    }
+
+    // If not found in traditional rooms, check global matches
+    if (!foundRoom) {
+      for (const [matchId, match] of activeGlobalMatches.entries()) {
+        const player = match.players.find(p => p.webrtcSocketId === socket.id);
+        if (player) {
+          foundRoom = true;
+          console.log(`✅ Found socket in global match ${matchId} (player: ${player.username})`);
+          // Relay to other player in the match
+          const otherPlayer = match.players.find(p => p.webrtcSocketId !== socket.id);
+          if (otherPlayer && otherPlayer.webrtcSocketId) {
+            console.log(`📤 Relaying game-message (${data.type}) to ${otherPlayer.webrtcSocketId} (${otherPlayer.username})`);
+            io.to(otherPlayer.webrtcSocketId).emit('game-message', data);
           }
           break;
         }

@@ -53,6 +53,18 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const victoryNotificationShownRef = useRef(false);
     const [showShareCard, setShowShareCard] = useState(false);
     const [shareCardImage, setShareCardImage] = useState<string | null>(null);
+    const [shareCardDismissed, setShareCardDismissed] = useState(false);
+    const [showMatchFoundSplash, setShowMatchFoundSplash] = useState(false);
+    const matchFoundTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const hasStartedCountdownRef = useRef(false); // Track if countdown started for current opponent
+    const currentMatchIdRef = useRef<string | null>(null); // Track current match ID to prevent stale connections
+
+    // For Global mode, track opponent separately since we don't use continuous-run server system
+    const [globalOpponent, setGlobalOpponent] = useState<{ username: string; socketId: string } | null>(null);
+    const [globalOpponentsDefeated, setGlobalOpponentsDefeated] = useState(0);
+    const [isSearchingNextOpponent, setIsSearchingNextOpponent] = useState(false);
+    const isSearchingNextOpponentRef = useRef(false); // Ref to avoid closure issues in event handlers
+    const lastDefeatedOpponentRef = useRef<string | null>(null);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -60,6 +72,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const remoteCanvasRef = useRef<HTMLCanvasElement | null>(null); // NEW
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const bothEyesClosedStart = useRef<number | null>(null);
+    const blinkFrameCount = useRef<number>(0); // Frame-based blink verification
+    const faceLeftFrameTime = useRef<number | null>(null); // Track when face left frame for grace period
     
     const { bestScore, setBestScore } = useBestScore();
     const [score, setScore] = useState(0);
@@ -113,15 +127,17 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       isLocalStreamReady,
     } = useSimplePeer(username);
 
-    // Global multiplayer hook (disabled in Continuous/Global mode to prevent socket conflicts)
-    const isContinuousModeCheck = mode === GameMode.Continuous || mode === GameMode.Global;
+    // Global multiplayer hook (always disabled to prevent socket conflicts)
     const {
       currentMatch: globalMatch,
       submitGameResult,
       joinGlobalQueue,
-    } = useGlobalMultiplayer(false); // Always disabled now
+      isInQueue,
+    } = useGlobalMultiplayer(false); // Always disabled to prevent socket conflicts with useSimplePeer
 
-    // Continuous run hook - use socket from useSimplePeer (same socket as WebRTC signaling)
+    // Continuous run mechanics - used by BOTH Continuous and Global modes
+    // Continuous mode = endless local practice with continuous mechanics
+    // Global mode = global matchmaking using the same continuous mechanics
     const {
       runState,
       startRun,
@@ -131,16 +147,38 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       isInRun,
     } = useContinuousRun(simplePeerSocket);
 
-    // Determine which multiplayer system to use
-    const isGlobalMode = mode === GameMode.Global;
-    const isContinuousMode = mode === GameMode.Continuous || mode === GameMode.Global;
+    // Mode flags for clarity
+    const isGlobalMode = mode === GameMode.Global; // Global matchmaking
+    const isContinuousMode = mode === GameMode.Continuous || mode === GameMode.Global; // Uses continuous mechanics
     const multiplayerData = isGlobalMode ? globalMatchData : null;
     // Use globalMatchData (prop) as fallback if globalMatch (from hook) is null
     const effectiveGlobalMatch = globalMatch || globalMatchData;
-    const opponentData = isGlobalMode ? effectiveGlobalMatch?.opponent : opponent;
+    // Use opponent from SimplePeer first, then fall back to match data
+    const opponentData = isGlobalMode
+        ? (opponent || effectiveGlobalMatch?.opponent)
+        : opponent;
 
     // For Global mode, consider connected if we have remote stream
-    const effectiveIsConnected = isGlobalMode ? (!!remoteStream && !!effectiveGlobalMatch) : isConnected;
+    // For global mode, use actual peer connection status, not remoteStream
+    // remoteStream can be stale during transitions between matches
+    const effectiveIsConnected = isGlobalMode ? (isConnected && !!remoteStream && !!effectiveGlobalMatch) : isConnected;
+
+    // Initialize match ID for first match from globalMatchData
+    useEffect(() => {
+        if (isGlobalMode && globalMatchData && globalMatchData.matchId && !currentMatchIdRef.current) {
+            console.log('🆔 [INIT] Setting initial match ID from globalMatchData:', globalMatchData.matchId);
+            currentMatchIdRef.current = globalMatchData.matchId;
+
+            // Also set the opponent for first match
+            if (globalMatchData.opponent && !globalOpponent) {
+                console.log('👤 [INIT] Setting initial opponent from globalMatchData:', globalMatchData.opponent);
+                setGlobalOpponent({
+                    username: globalMatchData.opponent.username,
+                    socketId: globalMatchData.matchId
+                });
+            }
+        }
+    }, [isGlobalMode, globalMatchData, globalOpponent]);
 
     // Initialize local stream for continuous mode
     useEffect(() => {
@@ -150,13 +188,14 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       }
     }, [isContinuousMode, initializeLocalStream]);
 
-    // Auto-start continuous run when entering continuous mode (wait for local stream to be ready)
+    // Auto-start continuous run when entering continuous mode (ONLY for Continuous, NOT Global)
+    // Global mode is handled by global matchmaking server
     useEffect(() => {
-      if (isContinuousMode && simplePeerSocket && runState.status === 'ended' && isLocalStreamReady) {
+      if (mode === GameMode.Continuous && simplePeerSocket && runState.status === 'ended' && isLocalStreamReady) {
         console.log('🏃 Auto-starting continuous run for:', username);
         startRun(username);
       }
-    }, [isContinuousMode, simplePeerSocket, username, startRun, runState.status, isLocalStreamReady]);
+    }, [mode, simplePeerSocket, username, startRun, runState.status, isLocalStreamReady]);
 
     // Handle continuous run transitions
     useEffect(() => {
@@ -212,35 +251,133 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
     // Handle continuous run opponent loss (from BLINK message)
     useEffect(() => {
-      if (isContinuousMode && lastBlinkWinner && lastBlinkWinner.includes('Win') && !victoryNotificationShownRef.current) {
+      console.log('🔄 Blink winner effect triggered:', {
+        isContinuousMode,
+        lastBlinkWinner,
+        victoryNotificationShown: victoryNotificationShownRef.current,
+        gameStatus,
+        runStateStatus: runState.status,
+        currentOpponent: runState.currentOpponent
+      });
+
+      // Get current opponent identifier for Global mode
+      const currentOpponentId = mode === GameMode.Global ? globalOpponent?.socketId : runState.currentOpponent?.socketId;
+      const alreadyDefeatedThisOpponent = lastDefeatedOpponentRef.current === currentOpponentId;
+
+      if (isContinuousMode && lastBlinkWinner && lastBlinkWinner.includes('Win') && !alreadyDefeatedThisOpponent && gameStatus === GameStatus.Playing && currentOpponentId) {
         // Player won against current opponent
-        console.log('🎯 Continuous run: Player won via BLINK message');
-        
-        // Prevent double-trigger
+        console.log('🎯 Continuous/Global run: Player won via BLINK message');
+        console.log('🎯 Mode:', mode, 'Run state:', runState, 'Global opponent:', globalOpponent);
+
+        // Mark this opponent as defeated to prevent double-trigger
+        lastDefeatedOpponentRef.current = currentOpponentId;
         victoryNotificationShownRef.current = true;
-        
-        // Freeze the run time at the moment of victory
-        setVictoryTime(runState.currentTime);
-        
-        // Show victory notification before handling opponent loss
-        setShowVictoryNotification(true);
-        setVictoryOpponentsDefeated(runState.opponentsDefeated + 1);
-        
-        // Auto-hide victory notification after 3 seconds
-        setTimeout(() => {
-          setShowVictoryNotification(false);
-          victoryNotificationShownRef.current = false; // Reset for next match
-        }, 3000);
-        
-        if (runState.currentOpponent) {
-          handleOpponentLoss(runState.currentOpponent.socketId);
+
+        // STOP the current game for winner
+        setGameStatus(GameStatus.Idle);
+        const gameTime = Date.now() - (gameStartTime || 0);
+        setGameEndTime(gameTime);
+        console.log('✅ Game stopped, status set to Idle, gameTime:', gameTime);
+
+        // Clear winner state (not showing end screen for winner in continuous)
+        setWinner(null);
+
+        // For Global mode vs Continuous mode
+        if (mode === GameMode.Global) {
+          // Global mode: Increment global counter and show notification
+          const newOpponentsDefeated = globalOpponentsDefeated + 1;
+          setGlobalOpponentsDefeated(newOpponentsDefeated);
+          setShowVictoryNotification(true);
+          setVictoryOpponentsDefeated(newOpponentsDefeated);
+          console.log('🌍 [VICTORY FLOW] Global mode - opponents defeated:', newOpponentsDefeated);
+
+          // Auto-hide victory notification and find next opponent (stay in same session!)
+          setTimeout(() => {
+            console.log('⏱️ [VICTORY FLOW] Hiding victory notification, finding next opponent in same session');
+            console.log('📊 [VICTORY FLOW] Current state before reset:', {
+              gameStatus,
+              winner,
+              hasGameStartTime: !!gameStartTime,
+              hasGameEndTime: !!gameEndTime,
+              globalOpponent,
+              isSearchingNextOpponent,
+              simplePeerSocketConnected: simplePeerSocket?.connected,
+              simplePeerSocketId: simplePeerSocket?.id
+            });
+
+            setShowVictoryNotification(false);
+
+            // Reset game state for next match BUT keep session alive
+            setGameStatus(GameStatus.Idle);
+            setWinner(null);
+            setWinnerUsername(null);
+            setGameStartTime(null);
+            setGameEndTime(null);
+            setEyeScreenshot(null);
+            setIsMyReady(false);
+
+            // Reset ALL blink detection state
+            bothEyesClosedStart.current = null;
+            blinkFrameCount.current = 0;
+            faceLeftFrameTime.current = null;
+
+            // Reset countdown/match tracking refs
+            hasStartedCountdownRef.current = false;
+            currentMatchIdRef.current = null;
+
+            // Show searching state and clear defeated opponent
+            console.log('🔍 [VICTORY FLOW] Setting isSearchingNextOpponent = true (both state and ref)');
+            setIsSearchingNextOpponent(true);
+            isSearchingNextOpponentRef.current = true;
+
+            console.log('🧹 [VICTORY FLOW] Clearing globalOpponent (was:', globalOpponent?.username, ')');
+            setGlobalOpponent(null); // Clear defeated opponent so new one can be detected
+
+            // Rejoin the queue using the simplePeerSocket to avoid conflicts
+            console.log('🔄 [VICTORY FLOW] Rejoining global queue for next opponent:', username);
+            console.log('🔌 [VICTORY FLOW] Socket status:', {
+              exists: !!simplePeerSocket,
+              connected: simplePeerSocket?.connected,
+              id: simplePeerSocket?.id,
+              hasListeners: simplePeerSocket ? simplePeerSocket.listeners('global-match-found').length : 0
+            });
+
+            if (simplePeerSocket?.connected) {
+              console.log('✅ [VICTORY FLOW] Emitting join-global-queue event');
+              simplePeerSocket.emit('join-global-queue', { username });
+              console.log('✅ [VICTORY FLOW] join-global-queue event emitted successfully');
+            } else {
+              console.error('❌ [VICTORY FLOW] Cannot rejoin queue - socket not connected!');
+            }
+          }, 3000);
+        } else {
+          // Continuous mode: Use run state
+          setVictoryTime(runState.currentTime);
+          setShowVictoryNotification(true);
+          setVictoryOpponentsDefeated(runState.opponentsDefeated + 1);
+          console.log('🏆 Continuous mode - victory notification shown, opponents defeated:', runState.opponentsDefeated + 1);
+
+          // Auto-hide victory notification after 3 seconds
+          setTimeout(() => {
+            console.log('⏱️ Hiding victory notification after 3 seconds');
+            setShowVictoryNotification(false);
+            victoryNotificationShownRef.current = false;
+          }, 3000);
+
+          if (runState.currentOpponent) {
+            console.log('🎯 Calling handleOpponentLoss for:', runState.currentOpponent);
+            handleOpponentLoss(runState.currentOpponent.socketId);
+          } else {
+            console.log('❌ No current opponent to handle loss for!');
+          }
         }
-      } else if (isContinuousMode && lastBlinkWinner && lastBlinkWinner.includes('Lose')) {
+      } else if (isContinuousMode && lastBlinkWinner && lastBlinkWinner.includes('Lose') && gameStatus === GameStatus.Playing) {
         // Player lost - end the run immediately (BLINK message was already sent before this)
-        console.log('💀 Continuous run: Player lost - ending run immediately');
+        // ONLY end if game is actively playing to prevent premature endings
+        console.log('💀 Continuous run: Player lost during active gameplay - ending run');
         handlePlayerLoss();
       }
-    }, [isContinuousMode, lastBlinkWinner, runState.currentOpponent, runState.opponentsDefeated, runState.currentTime, handleOpponentLoss, handlePlayerLoss]);
+    }, [isContinuousMode, lastBlinkWinner, gameStatus, runState.currentOpponent, runState.opponentsDefeated, runState.currentTime, handleOpponentLoss, handlePlayerLoss, gameStartTime, runState]);
 
     // Debug logging for connection status
     useEffect(() => {
@@ -258,20 +395,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }
     }, [isGlobalMode, remoteStream, globalMatch, globalMatchData, effectiveGlobalMatch, opponentData, effectiveIsConnected, isConnected]);
 
-    // Debug logging for opponent eye status
-    useEffect(() => {
-        if (mode === GameMode.Multiplayer || mode === GameMode.Global) {
-            console.log('👁️ Opponent Eye Status:', {
-                opponentLeftEar,
-                opponentRightEar,
-                currentThreshold,
-                leftEyeOpen: opponentLeftEar > currentThreshold,
-                rightEyeOpen: opponentRightEar > currentThreshold,
-                remoteFaceMeshReady,
-                opponentHasFace
-            });
-        }
-    }, [mode, opponentLeftEar, opponentRightEar, remoteFaceMeshReady, opponentHasFace, currentThreshold]);
+    // Removed spammy opponent eye status debug logging
 
     // Initialize distraction system
     const {
@@ -379,7 +503,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [mode, roomId, isHost]); // Removed createRoom, joinRoom from dependencies to prevent re-runs
     
     useEffect(() => {
-        if (lastBlinkWinner) {
+        // Don't process lastBlinkWinner if we're searching for next opponent (continuous mode)
+        if (lastBlinkWinner && !isSearchingNextOpponent) {
             setGameStatus(GameStatus.GameOver);
             setWinner(lastBlinkWinner);
             const gameTime = Date.now() - (gameStartTime || 0);
@@ -396,8 +521,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             }
 
             updateSessionStats(gameTime, didWin);
+        } else if (lastBlinkWinner && isSearchingNextOpponent) {
+            console.log('⏭️ Ignoring lastBlinkWinner during continuous mode search:', lastBlinkWinner);
         }
-    }, [lastBlinkWinner, gameStartTime, updateSessionStats, captureEyeScreenshot, username, opponentData]);
+    }, [lastBlinkWinner, gameStartTime, updateSessionStats, captureEyeScreenshot, username, opponentData, isSearchingNextOpponent]);
 
     const resetGame = useCallback(() => {
         setGameStatus(GameStatus.Idle);
@@ -407,13 +534,15 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         setGameEndTime(null);
         setEyeScreenshot(null);
         setWinnerUsername(null);
+        setShowShareCard(false);
+        setShareCardDismissed(false);
         bothEyesClosedStart.current = null;
-        
+
         if (countdownIntervalRef.current) {
             clearInterval(countdownIntervalRef.current);
             countdownIntervalRef.current = null;
         }
-        
+
         if (mode === GameMode.Multiplayer) {
             setIsMyReady(false);
             sendData({type: 'READY_STATE', payload: { isReady: false }});
@@ -428,15 +557,41 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     }, [sendData]);
 
   const handlePlayAgain = useCallback(() => {
-    console.log('🔄 Play Again clicked in Global mode');
-    // Reset game state
-    resetGame();
-    // Re-join global queue
-    if (mode === GameMode.Global) {
-      console.log('🌍 Re-joining global queue:', username);
-      joinGlobalQueue(username);
+    if (isGlobalMode) {
+      // Global mode: Exit back to queue screen
+      console.log('🏠 Exiting back to Global Queue screen');
+      onExit();
+    } else {
+      // Continuous mode: Restart the run
+      console.log('🔄 Restarting Continuous run');
+
+      // Reset all game state
+      setGameStatus(GameStatus.Idle);
+      setScore(0);
+      setWinner(null);
+      setGameStartTime(null);
+      setGameEndTime(null);
+      setEyeScreenshot(null);
+      setWinnerUsername(null);
+      setShowVictoryNotification(false);
+      setVictoryOpponentsDefeated(0);
+      setVictoryTime(0);
+      bothEyesClosedStart.current = null;
+      victoryNotificationShownRef.current = false;
+
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+
+      // Reset game state in peer connection
+      resetGameState();
+
+      // Start a new continuous run
+      console.log('🏃 Starting new run for:', username);
+      startRun(username);
     }
-  }, [mode, username, joinGlobalQueue, resetGame]);
+  }, [isGlobalMode, username, startRun, resetGameState, onExit]);
 
   const handleTryAgainContinuous = useCallback(() => {
     console.log('🔄 Try Again clicked in Continuous mode');
@@ -509,6 +664,175 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         }
     }, [gameStatus]);
     
+    // Initialize Global mode opponent tracking when match is found
+    useEffect(() => {
+        console.log('🔧 [OPPONENT DETECTION] Effect triggered:', {
+            mode,
+            effectiveIsConnected,
+            hasOpponentData: !!opponentData,
+            opponentDataUsername: opponentData?.username,
+            hasOpponent: !!opponent,
+            opponentSocketId: opponent?.socketId,
+            hasRemoteStream: !!remoteStream,
+            remoteStreamId: remoteStream?.id,
+            currentGlobalOpponent: globalOpponent?.username,
+            currentGlobalOpponentSocketId: globalOpponent?.socketId
+        });
+
+        // Only run opponent detection for FIRST match
+        // For subsequent matches (continuous mode), opponent is set in match-found handler
+        if (mode === GameMode.Global && effectiveIsConnected && opponentData && !globalOpponent) {
+            console.log('🌍 [OPPONENT DETECTION] First match - setting up opponent');
+            const opponentSocketId = opponent?.socketId || remoteStream?.id || 'unknown';
+
+            setGlobalOpponent({
+                username: opponentData.username,
+                socketId: opponentSocketId
+            });
+            console.log('✅ [OPPONENT DETECTION] globalOpponent state updated for first match');
+
+            // Reset victory tracking for match
+            victoryNotificationShownRef.current = false;
+            lastDefeatedOpponentRef.current = null;
+            hasStartedCountdownRef.current = false;
+        } else if (globalOpponent) {
+            console.log('⏭️ [OPPONENT DETECTION] Opponent already set (continuous mode), skipping detection');
+        } else {
+            console.log('⏭️ [OPPONENT DETECTION] Conditions not met for opponent tracking');
+        }
+    }, [mode, effectiveIsConnected, opponentData, globalOpponent, opponent, remoteStream]);
+
+    // Watch for new global matches when searching for next opponent (continuous session)
+    // Set up listener ALWAYS for Global mode, not just when searching
+    useEffect(() => {
+        console.log('🔧 [LISTENER SETUP] Effect triggered:', {
+            mode,
+            hasSimplePeerSocket: !!simplePeerSocket,
+            simplePeerSocketConnected: simplePeerSocket?.connected,
+            simplePeerSocketId: simplePeerSocket?.id,
+            isSearchingNextOpponent
+        });
+
+        if (mode !== GameMode.Global || !simplePeerSocket) {
+            console.log('⏭️ [LISTENER SETUP] Skipping listener setup - not Global mode or no socket');
+            return;
+        }
+
+        console.log('👂 [LISTENER SETUP] Setting up global-match-found listener for Global mode');
+        console.log('📊 [LISTENER SETUP] Current listener count before setup:', simplePeerSocket.listeners('global-match-found').length);
+
+        const handleGlobalMatchFound = (matchData: { matchId: string; opponent: { username: string }; isHost: boolean }) => {
+            console.log('🎯 [MATCH FOUND] Event received! Match data:', matchData);
+            console.log('📊 [MATCH FOUND] Current state:', {
+                isSearchingNextOpponentState: isSearchingNextOpponent,
+                isSearchingNextOpponentRef: isSearchingNextOpponentRef.current,
+                gameStatus,
+                hasGlobalOpponent: !!globalOpponent,
+                globalOpponentUsername: globalOpponent?.username,
+                hasRemoteStream: !!remoteStream,
+                isLocalStreamReady,
+                isPeerConnected: isConnected
+            });
+
+            // Only process if we're actually searching (check REF not state to avoid closure issues)
+            if (!isSearchingNextOpponentRef.current) {
+                console.log('⏭️ [MATCH FOUND] Ignoring match - not currently searching (isSearchingNextOpponentRef.current = false)');
+                return;
+            }
+
+            console.log('✅ [MATCH FOUND] Processing match while searching for next opponent');
+
+            // Stop searching state
+            console.log('🔍 [MATCH FOUND] Setting isSearchingNextOpponent = false (both state and ref)');
+            setIsSearchingNextOpponent(false);
+            isSearchingNextOpponentRef.current = false;
+
+            // The match data includes opponent info and new matchId
+            const newMatchId = matchData.matchId;
+            console.log('🔄 [MATCH FOUND] Setting up peer connection for new match:', newMatchId);
+            console.log('🏠 [MATCH FOUND] Role:', matchData.isHost ? 'HOST' : 'GUEST');
+
+            // Reset game state to allow new room join (clear flags from previous match)
+            console.log('🔄 [MATCH FOUND] Resetting game state before joining new room');
+            resetGameState();
+
+            // Store current match ID to verify peer connections
+            currentMatchIdRef.current = newMatchId;
+            console.log('🆔 [MATCH FOUND] Set current match ID:', newMatchId);
+
+            // Set the new opponent data immediately so auto-start can work
+            // Use matchId as socketId to ensure each match has a unique opponent identifier
+            console.log('👤 [MATCH FOUND] Setting opponent data:', matchData.opponent);
+            setGlobalOpponent({
+                username: matchData.opponent.username,
+                socketId: newMatchId  // Use matchId to make each opponent unique
+            });
+
+            // Create or join the new peer connection
+            if (matchData.isHost) {
+                console.log(`🏠 [MATCH FOUND] Calling createRoom(${newMatchId})`);
+                createRoom(newMatchId);
+                console.log('✅ [MATCH FOUND] createRoom() called');
+            } else {
+                console.log(`👤 [MATCH FOUND] Calling joinRoom(${newMatchId})`);
+                joinRoom(newMatchId);
+                console.log('✅ [MATCH FOUND] joinRoom() called');
+            }
+        };
+
+        console.log('🔗 [LISTENER SETUP] Attaching event listener to socket');
+        simplePeerSocket.on('global-match-found', handleGlobalMatchFound);
+        console.log('✅ [LISTENER SETUP] Event listener attached successfully');
+        console.log('📊 [LISTENER SETUP] Current listener count after setup:', simplePeerSocket.listeners('global-match-found').length);
+
+        return () => {
+            console.log('🧹 [LISTENER CLEANUP] Removing global-match-found listener');
+            simplePeerSocket.off('global-match-found', handleGlobalMatchFound);
+            console.log('✅ [LISTENER CLEANUP] Listener removed');
+        };
+    }, [mode, simplePeerSocket, createRoom, joinRoom, isSearchingNextOpponent]);
+
+    // Auto-start for Global mode (no splash screen - it's not continuous mode)
+    // Use username as stable dependency instead of the entire opponentData object
+    const opponentUsername = opponentData?.username;
+
+    useEffect(() => {
+        console.log('🔍 [AUTO-START] Effect triggered:', {
+            mode,
+            effectiveIsConnected,
+            hasOpponentData: !!opponentData,
+            opponentUsername,
+            gameStatus,
+            hasStartedCountdown: hasStartedCountdownRef.current,
+            globalOpponentSocketId: globalOpponent?.socketId,
+            currentMatchId: currentMatchIdRef.current
+        });
+
+        if (mode === GameMode.Global && effectiveIsConnected && opponentUsername && gameStatus === GameStatus.Idle) {
+            // Verify we're connected to the CURRENT match, not a stale connection
+            const isCorrectMatch = globalOpponent?.socketId === currentMatchIdRef.current;
+
+            if (!isCorrectMatch) {
+                console.log('⚠️ [AUTO-START] Skipping - opponent socketId does not match current match ID');
+                console.log('   Expected:', currentMatchIdRef.current, 'Got:', globalOpponent?.socketId);
+                return;
+            }
+
+            // Only start countdown if we haven't already for this opponent
+            if (!hasStartedCountdownRef.current) {
+                console.log('🎯 Global match ready! Starting countdown immediately...');
+                hasStartedCountdownRef.current = true; // Mark as started
+
+                // Start immediately - no timeout needed since we're using the ref to prevent duplicates
+                console.log('🎯 Starting countdown for global match');
+                startCountdown();
+            } else {
+                console.log('⏭️ Countdown already started for this opponent, skipping');
+            }
+        }
+    }, [mode, effectiveIsConnected, opponentUsername, gameStatus, startCountdown, globalOpponent]);
+
+    // Regular multiplayer still uses ready system
     useEffect(() => {
         console.log('🎮 Game start conditions check:', {
             mode,
@@ -526,73 +850,108 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             console.log('🎯 Both players ready! Starting multiplayer game countdown!');
             startCountdown();
         }
-        // Global mode: BOTH players must be ready before game starts
-        if (mode === GameMode.Global && isMyReady && isOpponentReady && opponentData && gameStatus === GameStatus.Idle) {
-            console.log('🎯 Both players ready! Starting global game countdown!');
-            startCountdown();
-        }
     }, [mode, isMyReady, isOpponentReady, gameStatus, startCountdown, opponentData, isConnected, connectionStatus, opponent, globalMatch]);
 
-    // Auto-lose if player leaves frame during gameplay
+    // Auto-lose if player leaves frame during gameplay (with grace period)
     useEffect(() => {
-        if (gameStatus !== GameStatus.Playing) return;
+        if (gameStatus !== GameStatus.Playing) {
+            // Reset grace period when not playing
+            faceLeftFrameTime.current = null;
+            return;
+        }
+
+        const FRAME_EXIT_GRACE_PERIOD_MS = 2000; // 2 second grace period
 
         // Check if local player left the frame
         if (!isFaceCentered) {
-            console.log('❌ Player left frame - Auto lose!');
-            setGameStatus(GameStatus.GameOver);
-            setWinner('You Lost!\n(Left Frame)');
+            if (faceLeftFrameTime.current === null) {
+                faceLeftFrameTime.current = Date.now();
+                console.log('⚠️ Face left frame - grace period started (2 seconds)');
+            } else if (Date.now() - faceLeftFrameTime.current > FRAME_EXIT_GRACE_PERIOD_MS) {
+                console.log('❌ Face out of frame too long - Auto lose!');
+                faceLeftFrameTime.current = null;
 
-            // Notify opponent in multiplayer
-            if (mode === GameMode.Multiplayer || mode === GameMode.Global) {
-                sendData({ type: 'GAME_STATE', payload: { status: 'ended', winner: 'opponent', reason: 'left-frame' } });
+                setGameStatus(GameStatus.GameOver);
+                setWinner('You Lost!\n(Left Frame)');
+
+                // Notify opponent in multiplayer
+                if (mode === GameMode.Multiplayer || mode === GameMode.Global) {
+                    sendData({ type: 'GAME_STATE', payload: { status: 'ended', winner: 'opponent', reason: 'left-frame' } });
+                }
+
+                // Update stats
+                const gameDuration = gameStartTime ? Date.now() - gameStartTime : 0;
+                if (session) {
+                    updateSessionStats(gameDuration, false);
+                }
+
+                // Submit result for global mode
+                if (mode === GameMode.Global && globalMatchData && submitGameResult) {
+                    submitGameResult(globalMatchData.matchId, 'loss');
+                }
             }
-
-            // Update stats
-            const gameDuration = gameStartTime ? Date.now() - gameStartTime : 0;
-            if (session) {
-                updateSessionStats(gameDuration, false);
-            }
-
-            // Submit result for global mode
-            if (mode === GameMode.Global && globalMatchData && submitGameResult) {
-                submitGameResult(globalMatchData.matchId, 'loss');
+        } else {
+            if (faceLeftFrameTime.current !== null) {
+                console.log('✅ Face returned to frame - grace period cancelled');
+                faceLeftFrameTime.current = null;
             }
         }
     }, [gameStatus, isFaceCentered, mode, sendData, updateSessionStats, gameStartTime, globalMatchData, submitGameResult, session]);
 
     useEffect(() => {
-        if (gameStatus !== GameStatus.Playing || !faceMeshReady) return;
+        if (gameStatus !== GameStatus.Playing || !faceMeshReady) {
+            // Reset blink detection when not playing
+            blinkFrameCount.current = 0;
+            bothEyesClosedStart.current = null;
+            return;
+        }
 
         const leftClosed = leftEar < currentThreshold;
         const rightClosed = rightEar < currentThreshold;
-        
+
         if (leftClosed && rightClosed) {
-            if (bothEyesClosedStart.current === null) {
-                bothEyesClosedStart.current = Date.now();
-            } else if (Date.now() - bothEyesClosedStart.current > BLINK_DURATION_MS) {
-                setGameStatus(GameStatus.GameOver);
-                const gameTime = Date.now() - (gameStartTime || 0);
-                setGameEndTime(gameTime);
-                console.log('🎮 Game ended! Duration:', gameTime, 'Session:', session);
+            // Increment frame count for consecutive closed-eye detections
+            blinkFrameCount.current++;
 
-                // Capture screenshot of loser's eyes
-                captureEyeScreenshot();
+            // Require 3 consecutive frames before starting blink timer
+            // This prevents false positives from momentary detection errors
+            const BLINK_CONFIRMATION_FRAMES = 3;
 
-                if (mode === GameMode.Multiplayer || mode === GameMode.Continuous || mode === GameMode.Global) {
-                    sendData({ type: 'BLINK', payload: { gameTime } });
-                    setWinner('You Lose!');
-                    setWinnerUsername(opponentData?.username || 'Opponent');
-                    updateSessionStats(gameTime, false);
-                } else {
-                    setWinner('You blinked!');
-                    if (score > bestScore) {
-                        setBestScore(score);
+            if (blinkFrameCount.current >= BLINK_CONFIRMATION_FRAMES) {
+                if (bothEyesClosedStart.current === null) {
+                    bothEyesClosedStart.current = Date.now();
+                    console.log('👁️ Confirmed blink started (after', BLINK_CONFIRMATION_FRAMES, 'frames)');
+                } else if (Date.now() - bothEyesClosedStart.current > BLINK_DURATION_MS) {
+                    // Confirmed deliberate blink - end game
+                    console.log('👁️ Blink confirmed - ending game');
+                    blinkFrameCount.current = 0;
+                    bothEyesClosedStart.current = null;
+
+                    setGameStatus(GameStatus.GameOver);
+                    const gameTime = Date.now() - (gameStartTime || 0);
+                    setGameEndTime(gameTime);
+                    console.log('🎮 Game ended! Duration:', gameTime, 'Session:', session);
+
+                    // Capture screenshot of loser's eyes
+                    captureEyeScreenshot();
+
+                    if (mode === GameMode.Multiplayer || mode === GameMode.Continuous || mode === GameMode.Global) {
+                        sendData({ type: 'BLINK', payload: { gameTime } });
+                        setWinner('You Lose!');
+                        setWinnerUsername(opponentData?.username || 'Opponent');
+                        updateSessionStats(gameTime, false);
+                    } else {
+                        setWinner('You blinked!');
+                        if (score > bestScore) {
+                            setBestScore(score);
+                        }
+                        updateSessionStats(gameTime, true);
                     }
-                    updateSessionStats(gameTime, true);
                 }
             }
         } else {
+            // Eyes are open - reset counters
+            blinkFrameCount.current = 0;
             bothEyesClosedStart.current = null;
         }
     }, [leftEar, rightEar, gameStatus, faceMeshReady, mode, bestScore, score, sendData, setBestScore, gameStartTime, session, updateSessionStats, captureEyeScreenshot, opponentData, submitGameResult, currentThreshold]);
@@ -613,19 +972,22 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             if (connectionError) return `Connection Error:\n${connectionError}`;
             if (!effectiveIsConnected) {
                 if (connectionStatus.includes('Connecting') || connectionStatus.includes('Trying')) {
-                    return mode === GameMode.Multiplayer 
+                    return mode === GameMode.Multiplayer
                         ? `${connectionStatus}\n${isHost ? `Room: ${roomId}` : `Joining: ${roomId}`}`
                         : connectionStatus;
                 }
-                return mode === GameMode.Multiplayer 
+                return mode === GameMode.Multiplayer
                     ? (isHost ? `Waiting for opponent...\nRoom: ${roomId}` : `Connecting to room: ${roomId}`)
                     : "Connecting to global matchmaking...";
             }
             if (!opponentData) return "Establishing connection...";
             if (gameStatus === GameStatus.Idle) {
+                // Global mode: Auto-starts, show "Get Ready" message
+                if (mode === GameMode.Global) return "Get Ready...";
+
+                // Multiplayer mode: Manual ready button
                 if (!isMyReady) return "Click 'Ready' to start";
-                if (mode === GameMode.Multiplayer && !isOpponentReady) return `Waiting for ${opponentData.username}...`;
-                if (mode === GameMode.Global) return `Waiting for ${opponentData.username}...`;
+                if (!isOpponentReady) return `Waiting for ${opponentData.username}...`;
             }
         }
         
@@ -747,12 +1109,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         alert('📸 Image downloaded! Open Instagram and upload this image to share your Blinky result!');
     }, [shareCardImage, downloadShareCard]);
 
-    // Auto-create share card when player loses
-    useEffect(() => {
-        if (gameStatus === GameStatus.GameOver && winner && winner.includes('Lose') && eyeScreenshot && !showShareCard) {
-            createShareCard();
-        }
-    }, [gameStatus, winner, eyeScreenshot, showShareCard, createShareCard]);
+    // REMOVED: Auto-create share card when player loses
+    // The defeat card should only appear when user explicitly clicks the button
+    // This was causing the modal to auto-appear and re-trigger on close
 
     const renderEndGameScreen = () => {
         if (!winner || gameStatus !== GameStatus.GameOver) return null;
@@ -821,7 +1180,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         {eyeScreenshot && (
                             <div className="mt-6">
                                 <button
-                                    onClick={() => createShareCard()}
+                                    onClick={async () => {
+                                        console.log('📸 Share button clicked (Continuous mode)');
+                                        await createShareCard();
+                                    }}
                                     className="btn-primary text-xl px-8 py-3 bg-blue-600 hover:bg-blue-700"
                                 >
                                     📸 Share Your Defeat Card
@@ -875,35 +1237,48 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
                     {/* Action Buttons */}
                     <div className="flex gap-4 justify-center">
-                        {mode === GameMode.Global && (
-                            <button
-                                className="btn-primary text-xl px-8 py-4"
-                                onClick={handlePlayAgain}
-                            >
-                                🔄 Play Again
-                            </button>
+                        {isContinuousMode ? (
+                            <>
+                                <button
+                                    className="btn-primary text-xl px-8 py-4"
+                                    onClick={handlePlayAgain}
+                                >
+                                    🔄 Try Again
+                                </button>
+                                <button
+                                    className="btn-secondary text-xl px-8 py-4"
+                                    onClick={onExit}
+                                >
+                                    🏠 Return to Menu
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    className="btn-primary text-xl px-8 py-4"
+                                    onClick={resetGame}
+                                >
+                                    🔄 Play Again
+                                </button>
+                                <button
+                                    className="btn-secondary text-xl px-8 py-4"
+                                    onClick={onExit}
+                                >
+                                    🏠 Exit
+                                </button>
+                            </>
                         )}
-                        {mode !== GameMode.Global && (
-                            <button
-                                className="btn-primary text-xl px-8 py-4"
-                                onClick={resetGame}
-                            >
-                                🔄 Play Again
-                            </button>
-                        )}
-                        <button
-                            className="btn-secondary text-xl px-8 py-4"
-                            onClick={onExit}
-                        >
-                            🏠 Exit
-                        </button>
                     </div>
 
                     {/* Share Card Button for All Modes */}
                     {eyeScreenshot && (
                         <div className="mt-6">
                             <button
-                                onClick={() => createShareCard()}
+                                onClick={async () => {
+                                    console.log('📸 Share button clicked, eyeScreenshot:', !!eyeScreenshot, 'gameEndTime:', gameEndTime);
+                                    const result = await createShareCard();
+                                    console.log('📸 createShareCard result:', !!result);
+                                }}
                                 className="btn-primary text-xl px-8 py-3 bg-blue-600 hover:bg-blue-700"
                             >
                                 📸 Share Your Defeat Card
@@ -1056,7 +1431,13 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 </button>
             );
         }
-        if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && gameStatus === GameStatus.Idle) {
+        // Global mode: No ready button - auto-starts
+        if (mode === GameMode.Global && gameStatus === GameStatus.Idle) {
+            return null; // No controls needed - auto-starts after match found
+        }
+
+        // Regular multiplayer: Keep ready button
+        if (mode === GameMode.Multiplayer && gameStatus === GameStatus.Idle) {
             return (
                 <div className="space-y-2">
                     <button
@@ -1074,9 +1455,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     >
                         {isMyReady ? 'Ready ✓' : 'Ready'}
                     </button>
-                    {connectionError && mode === GameMode.Multiplayer && (
-                        <button 
-                            className="btn-secondary text-sm" 
+                    {connectionError && (
+                        <button
+                            className="btn-secondary text-sm"
                             onClick={() => {
                                 if (isHost && roomId) {
                                     createRoom(roomId);
@@ -1145,11 +1526,8 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 currentUsername={username}
             />
 
-            {/* Victory Notification for Continuous Mode Winners - Now shown in opponent's eye panel */}
-            {/* Full-screen overlay removed as per Phase 2 requirements */}
-
             {/* Transition Overlay for Continuous Mode - positioned to cover entire game area */}
-            {isContinuousMode && (
+            {isContinuousMode && mode !== GameMode.Global && (
                 <TransitionOverlay
                     isVisible={runState.status === 'transitioning' || runState.status === 'searching' || runState.status === 'countdown'}
                     runState={runState}
@@ -1163,7 +1541,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         <h2 className="text-3xl font-bold text-white mb-6 text-center">
                             📸 Your Defeat Card
                         </h2>
-                        
+
                         <div className="share-card-preview mb-6 flex justify-center">
                             <img
                                 src={shareCardImage}
@@ -1171,7 +1549,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                                 className="max-w-full max-h-96 rounded-lg border-2 border-purple-400"
                             />
                         </div>
-                        
+
                         <div className="text-center text-gray-300 mb-6">
                             <p className="text-lg mb-2">
                                 <strong>{username}</strong> lasted for <strong>{formatTime(gameEndTime || 0)}</strong>
@@ -1180,7 +1558,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                                 Share your staring contest result with friends!
                             </p>
                         </div>
-                        
+
                         <div className="flex flex-col sm:flex-row gap-4 justify-center">
                             <button
                                 onClick={downloadShareCard}
@@ -1201,7 +1579,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                                 📸 Share on Instagram
                             </button>
                             <button
-                                onClick={() => setShowShareCard(false)}
+                                onClick={() => {
+                                    setShowShareCard(false);
+                                    setShareCardDismissed(true);
+                                }}
                                 className="btn-secondary text-lg px-6 py-3"
                             >
                                 ❌ Close
@@ -1212,43 +1593,83 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             )}
 
 
-            <div className="manga-video-container mb-4">
-                <div className="manga-video-feed">
-                    <div className="video-crop-wrapper">
-                        <VideoFeed 
-                            videoRef={videoRef as React.RefObject<HTMLVideoElement>} 
-                            canvasRef={canvasRef as React.RefObject<HTMLCanvasElement>} 
-                            username={username} 
-                            isMuted={true} 
-                        />
-                    </div>
-                </div>
-                {(mode === GameMode.Multiplayer || mode === GameMode.Global || (mode === GameMode.Continuous && gameStatus !== GameStatus.GameOver)) && (
+            {/* Hide video feeds only on game over */}
+            {gameStatus !== GameStatus.GameOver && (
+                <div className="manga-video-container mb-4">
                     <div className="manga-video-feed">
                         <div className="video-crop-wrapper">
                             <VideoFeed
-                                videoRef={remoteVideoRef as React.RefObject<HTMLVideoElement>}
-                                canvasRef={remoteCanvasRef as React.RefObject<HTMLCanvasElement>}  // CHANGED: Now has canvas
-                                username={opponentData?.username || 'Waiting...'}
-                                isMuted={false}
-                                remoteStream={remoteStream}
-                                isRemote={true}  // NEW: Flag as remote
+                                videoRef={videoRef as React.RefObject<HTMLVideoElement>}
+                                canvasRef={canvasRef as React.RefObject<HTMLCanvasElement>}
+                                username={username}
+                                isMuted={true}
                             />
                         </div>
                     </div>
-                )}
-            </div>
+                    {(mode === GameMode.Multiplayer || mode === GameMode.Global || mode === GameMode.Continuous) && (
+                        <div className="manga-video-feed relative">
+                            <div className="video-crop-wrapper">
+                                <VideoFeed
+                                    videoRef={remoteVideoRef as React.RefObject<HTMLVideoElement>}
+                                    canvasRef={remoteCanvasRef as React.RefObject<HTMLCanvasElement>}
+                                    username={opponentData?.username || 'Waiting...'}
+                                    isMuted={false}
+                                    remoteStream={remoteStream}
+                                    isRemote={true}
+                                />
+                            </div>
 
-            <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg relative">
-                
-                {/* Single Distraction Overlay handling multiple distractions */}
-                <DistractionOverlay
-                    isActive={activeDistractions.length > 0}
-                    distractions={activeDistractions}
-                    onComplete={(id: string) => removeDistraction(id)}
-                />
+                            {/* Victory Notification - Overlay on opponent's video */}
+                            {showVictoryNotification && (
+                                <div className="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center rounded-lg animate-fadeIn z-10">
+                                    <div className="text-center p-4">
+                                        <div className="text-6xl mb-4 animate-bounce">🏆</div>
+                                        <h1 className="text-4xl font-bold text-green-400 mb-2 animate-pulse">
+                                            OPPONENT DEFEATED!
+                                        </h1>
+                                        <div className="text-2xl text-purple-300 mb-2">
+                                            {runState.currentOpponent?.username || globalOpponent?.username || 'Opponent'}
+                                        </div>
+                                        <div className="text-xl text-gray-300">
+                                            Defeated: <span className="text-yellow-400 font-bold">{victoryOpponentsDefeated}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
-                {renderConnectionStatus()}
+                            {/* Searching for Next Opponent - Overlay on opponent's video */}
+                            {isSearchingNextOpponent && (
+                                <div className="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center rounded-lg animate-fadeIn z-10">
+                                    <div className="text-center p-4">
+                                        <div className="text-5xl mb-3 animate-pulse">🔍</div>
+                                        <h2 className="text-3xl font-bold text-white mb-2">Searching...</h2>
+                                        <div className="text-lg text-purple-300 mb-2">Finding next opponent</div>
+                                        <div className="text-md text-gray-400">
+                                            Defeated: <span className="text-yellow-400 font-bold">{globalOpponentsDefeated}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-2">
+                                            Keep staring!
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Hide this entire section during game over */}
+            {gameStatus !== GameStatus.GameOver && (
+                <div className="bg-gray-900 bg-opacity-50 backdrop-blur-sm border border-gray-800 rounded-lg p-4 text-center w-full mx-auto shadow-lg relative">
+
+                    {/* Single Distraction Overlay handling multiple distractions */}
+                    <DistractionOverlay
+                        isActive={activeDistractions.length > 0}
+                        distractions={activeDistractions}
+                        onComplete={(id: string) => removeDistraction(id)}
+                    />
+
+                    {renderConnectionStatus()}
                 
                 <div className="manga-battle-display mb-6">
                     {renderMangaEyePanel(
@@ -1272,9 +1693,6 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 </div>
 
                 {renderScore()}
-
-                {/* End Game Screen Overlay */}
-                {gameStatus === GameStatus.GameOver && winner && renderEndGameScreen()}
 
                 <div className="my-4 min-h-24 flex items-center justify-center">
                     {gameStatus === GameStatus.Countdown && (
@@ -1364,11 +1782,12 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     >
                         Debug Info
                     </button>
-                    <button 
+                    <button
                         className="btn-secondary text-xs px-2 py-1"
                         onClick={async () => {
                             try {
-                                const response = await fetch('http://localhost:3001/rooms');
+                                const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+                                const response = await fetch(`${SOCKET_URL}/rooms`);
                                 const data = await response.json();
                                 console.log('🏠 SERVER ROOMS:', data);
                                 console.log('🏠 Available room IDs:', data.rooms.map((r: any) => r.roomId));
@@ -1418,7 +1837,11 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                         Test USER_INFO
                     </button>
                 </div>
-            </div>
+                </div>
+            )}
+
+            {/* End Game Screen - shown when gameStatus is GameOver */}
+            {renderEndGameScreen()}
 
             {/* All your existing styles remain the same */}
             <style>{`
@@ -1774,6 +2197,46 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     background: linear-gradient(45deg, rgba(234, 179, 8, 0.1), rgba(202, 138, 4, 0.2));
                     box-shadow: 0 0 15px rgba(234, 179, 8, 0.3);
                     margin: 0.5rem 0;
+                }
+
+                /* Match Found Splash Screen */
+                .match-found-card {
+                    background: linear-gradient(135deg, rgba(31, 31, 31, 0.98), rgba(15, 15, 15, 0.98));
+                    border: 4px solid rgba(34, 197, 94, 0.6);
+                    border-radius: 24px;
+                    padding: 4rem 3rem;
+                    max-width: 600px;
+                    width: 90%;
+                    text-align: center;
+                    box-shadow: 0 20px 80px rgba(34, 197, 94, 0.4);
+                    animation: matchFoundSlideUp 0.5s ease-out;
+                }
+
+                .opponent-reveal {
+                    padding: 1.5rem;
+                    background: rgba(147, 51, 234, 0.1);
+                    border-radius: 16px;
+                    border: 2px solid rgba(147, 51, 234, 0.3);
+                }
+
+                @keyframes matchFoundSlideUp {
+                    from {
+                        transform: translateY(100px) scale(0.9);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateY(0) scale(1);
+                        opacity: 1;
+                    }
+                }
+
+                @keyframes fadeIn {
+                    from {
+                        opacity: 0;
+                    }
+                    to {
+                        opacity: 1;
+                    }
                 }
             `}</style>
         </div>

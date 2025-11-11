@@ -7,13 +7,15 @@ interface GlobalQueueScreenProps {
   onExit: () => void;
 }
 
-const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({ 
-  username, 
-  onMatchFound, 
-  onExit 
+const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
+  username,
+  onMatchFound,
+  onExit
 }) => {
   const [playerStats, setPlayerStats] = useState<PlayerStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasCameraPermission, setHasCameraPermission] = useState(false);
+  const [checkingCamera, setCheckingCamera] = useState(true);
   
   const {
     isConnected,
@@ -27,6 +29,28 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
     getPlayerStats,
   } = useGlobalMultiplayer();
 
+  // Check camera permission on mount
+  useEffect(() => {
+    const checkCameraPermission = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+        // Stop the stream immediately - we just needed to check permission
+        stream.getTracks().forEach(track => track.stop());
+        setHasCameraPermission(true);
+        setCheckingCamera(false);
+      } catch (error) {
+        console.error('Camera permission denied:', error);
+        setHasCameraPermission(false);
+        setCheckingCamera(false);
+      }
+    };
+
+    checkCameraPermission();
+  }, []);
+
   // Load player stats on mount
   useEffect(() => {
     const loadStats = async () => {
@@ -35,19 +59,34 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
       setPlayerStats(stats);
       setIsLoading(false);
     };
-    
+
     if (username) {
       loadStats();
     }
   }, [username, getPlayerStats]);
 
+  // Auto-join queue when returning from a match (if connected and not already in queue)
+  useEffect(() => {
+    if (isConnected && !isInQueue && hasCameraPermission && !checkingCamera && username) {
+      console.log('🔄 Auto-joining queue after returning from match');
+      joinGlobalQueue(username);
+    }
+  }, [isConnected, isInQueue, hasCameraPermission, checkingCamera, username, joinGlobalQueue]);
+
   // Handle match found
   useEffect(() => {
+    console.log('🔍 GlobalQueueScreen match check:', {
+      hasCurrentMatch: !!currentMatch,
+      currentMatch,
+      isInQueue,
+      isConnected
+    });
+
     if (currentMatch) {
       console.log('🎯 Match found, transitioning to game:', currentMatch);
       onMatchFound(currentMatch);
     }
-  }, [currentMatch, onMatchFound]);
+  }, [currentMatch, onMatchFound, isInQueue, isConnected]);
 
   const handleJoinQueue = () => {
     if (!isInQueue && isConnected) {
@@ -156,15 +195,36 @@ const GlobalQueueScreen: React.FC<GlobalQueueScreenProps> = ({
         
         {!isInQueue ? (
           <div className="text-center">
-            <div className="text-gray-400 mb-4">
-              Ready to find an opponent?
-            </div>
-            <button 
+            {!hasCameraPermission && !checkingCamera && (
+              <div className="bg-red-900 bg-opacity-30 border border-red-500 rounded-lg p-4 mb-4">
+                <div className="text-red-400 font-bold mb-2">📷 Camera Access Required</div>
+                <div className="text-sm text-gray-300 mb-3">
+                  Please grant camera permission to play global multiplayer
+                </div>
+                <button
+                  className="btn-secondary text-sm px-4 py-2"
+                  onClick={() => window.location.reload()}
+                >
+                  Grant Permission
+                </button>
+              </div>
+            )}
+            {checkingCamera && (
+              <div className="text-gray-400 mb-4">
+                Checking camera access...
+              </div>
+            )}
+            {hasCameraPermission && !checkingCamera && (
+              <div className="text-gray-400 mb-4">
+                Ready to find an opponent?
+              </div>
+            )}
+            <button
               className="btn-primary text-lg px-8 py-3"
               onClick={handleJoinQueue}
-              disabled={!isConnected || isLoading}
+              disabled={!isConnected || isLoading || !hasCameraPermission || checkingCamera}
             >
-              {!isConnected ? 'Connecting...' : 'Find Match'}
+              {checkingCamera ? 'Checking Camera...' : !hasCameraPermission ? 'Camera Required' : !isConnected ? 'Connecting...' : 'Find Match'}
             </button>
           </div>
         ) : (

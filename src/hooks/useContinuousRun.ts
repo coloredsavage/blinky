@@ -114,13 +114,21 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
     }
   }, []);
 
+  // Stop search message rotation (defined early to avoid dependency issues)
+  const stopSearchMessageRotation = useCallback(() => {
+    if (searchMessageRotationRef.current) {
+      clearInterval(searchMessageRotationRef.current);
+      searchMessageRotationRef.current = null;
+    }
+  }, []);
+
   // Handle countdown complete - starts game timer and marks first match if needed
   const handleCountdownComplete = useCallback(() => {
     console.log('🎯 Countdown complete - starting game timer');
-    
+
     // Start game timer for current match
     startGameTimer();
-    
+
     // If this is the first match, mark it as started and start personal timer
     if (!runState.hasStartedFirstMatch) {
       console.log('🏁 First match started - starting personal timer');
@@ -172,9 +180,12 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
   // End the current run
   const endRun = useCallback((reason?: string) => {
     console.log('🏁 Ending continuous run:', runState.runId, reason);
-    
+
+    // Stop ALL timers and intervals
     stopRunTimer();
-    
+    stopGameTimer();
+    stopSearchMessageRotation();
+
     if (transitionTimeoutRef.current) {
       clearTimeout(transitionTimeoutRef.current);
       transitionTimeoutRef.current = null;
@@ -182,7 +193,7 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
 
     // Notify server that run ended
     if (socket && runState.runId) {
-      socket.emit('continuous-run:end', { 
+      socket.emit('continuous-run:end', {
         runId: runState.runId,
         reason: reason || 'player_lost'
       });
@@ -194,7 +205,7 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
       currentOpponent: null,
       nextOpponent: null
     }));
-  }, [socket, runState.runId, stopRunTimer]);
+  }, [socket, runState.runId, stopRunTimer, stopGameTimer, stopSearchMessageRotation]);
 
   // Handle when opponent loses (player wins)
   const handleOpponentLoss = useCallback((opponentSocketId: string) => {
@@ -213,6 +224,11 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
     // Stop game timer for current match
     stopGameTimer();
 
+    // PAUSE personal timer while searching for next opponent
+    // This ensures only active match time is counted
+    stopRunTimer();
+    console.log('⏸️ Personal timer PAUSED while searching for next opponent');
+
     // Record the match in history
     const matchRecord = {
       opponent: runState.currentOpponent.username,
@@ -230,7 +246,7 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
 
     // Request next opponent from server
     if (socket && runState.runId) {
-      socket.emit('continuous-run:find-next', { 
+      socket.emit('continuous-run:find-next', {
         runId: runState.runId,
         currentTime: runState.currentTime,
         opponentsDefeated: runState.opponentsDefeated + 1
@@ -242,7 +258,7 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
       console.log('⏰ No opponent found after 5 minutes - ending run');
       endRun('queue_timeout');
     }, 300000); // 5 minutes
-  }, [socket, runState, endRun, stopGameTimer]);
+  }, [socket, runState, endRun, stopGameTimer, stopRunTimer]);
 
   // Handle when player loses
   const handlePlayerLoss = useCallback(() => {
@@ -265,6 +281,11 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
       transitionTimeoutRef.current = null;
     }
 
+    // RESUME personal timer when new opponent found
+    // Timer was paused during search to only count active match time
+    startRunTimer();
+    console.log('▶️ Personal timer RESUMED for new match');
+
     setRunState(prev => ({
       ...prev,
       currentOpponent: data.opponent,
@@ -281,7 +302,7 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
       // Call countdown complete handler to start game timer
       handleCountdownComplete();
     }, 3000); // 3 second countdown
-  }, [handleCountdownComplete]);
+  }, [handleCountdownComplete, startRunTimer]);
 
   // Start search message rotation
   const startSearchMessageRotation = useCallback(() => {
@@ -294,23 +315,15 @@ const useContinuousRun = (socket: Socket | null): UseContinuousRunReturn => {
         const searchDuration = Date.now() - prev.searchStartTime;
         const messageCount = getSearchMessages(searchDuration).length;
         const nextIndex = (prev.searchMessageIndex + 1) % messageCount;
-        
+
         console.log(`🔄 Rotating search message to index ${nextIndex} (${searchDuration}ms searching)`);
-        
+
         return {
           ...prev,
           searchMessageIndex: nextIndex
         };
       });
     }, 5000); // Rotate every 5 seconds
-  }, []);
-
-  // Stop search message rotation
-  const stopSearchMessageRotation = useCallback(() => {
-    if (searchMessageRotationRef.current) {
-      clearInterval(searchMessageRotationRef.current);
-      searchMessageRotationRef.current = null;
-    }
   }, []);
 
   // Get search messages based on search duration

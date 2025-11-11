@@ -73,7 +73,7 @@ const App: React.FC = () => {
         setIsJoining(false);
         setIsHost(false);
         setGlobalMatchData(null);
-        
+
         // Clean up URL when exiting
         window.history.pushState({}, document.title, window.location.pathname);
     };
@@ -216,11 +216,11 @@ const App: React.FC = () => {
         
         // Show game screen once we have mode, username, and (for global) match data
         return (
-            <GameScreen 
-                mode={gameMode} 
-                username={username} 
-                roomId={roomId} 
-                onExit={handleExitGame} 
+            <GameScreen
+                mode={gameMode}
+                username={username}
+                roomId={roomId}
+                onExit={handleExitGame}
                 isHost={isHost}
                 globalMatchData={globalMatchData}
             />

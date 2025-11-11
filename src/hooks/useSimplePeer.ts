@@ -27,6 +27,7 @@ const useSimplePeer = (username: string) => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const roomIdRef = useRef<string | null>(null);
   const hasJoinedRoomRef = useRef<boolean>(false);
   const hasCreatedRoomRef = useRef<boolean>(false);
 
@@ -120,25 +121,32 @@ const useSimplePeer = (username: string) => {
         setConnectionError(null);
         
         // For global matches, we need to set opponent data when connected
-        // Send our username to the opponent
-        if (username && newPeer.connected) {
-          console.log('📤 Attempting to send USER_INFO message...');
-          try {
-            const message = { type: 'USER_INFO', payload: { username } };
-            console.log('📤 USER_INFO message content:', message);
-            console.log('📤 Peer connected state before send:', newPeer.connected);
-            newPeer.send(JSON.stringify(message));
-            console.log('✅ USER_INFO message sent successfully');
-            console.log('📤 Peer connected state after send:', newPeer.connected);
-          } catch (error) {
-            console.error('❌ Failed to send USER_INFO:', error);
-            console.error('❌ Error details:', error);
+        // Send our username to the opponent with retry mechanism
+        const sendUserInfo = (attempts = 0) => {
+          if (attempts > 5) {
+            console.error('❌ Failed to send USER_INFO after 5 attempts');
+            return;
           }
-        } else {
-          console.log('⚠️ Cannot send USER_INFO - missing username or peer not connected');
-          console.log('⚠️ Username:', username);
-          console.log('⚠️ Peer connected:', newPeer.connected);
-        }
+
+          if (username && newPeer.connected) {
+            console.log(`📤 Attempting to send USER_INFO message (attempt ${attempts + 1})...`);
+            try {
+              const message = { type: 'USER_INFO', payload: { username } };
+              newPeer.send(JSON.stringify(message));
+              console.log('✅ USER_INFO message sent successfully');
+            } catch (error) {
+              console.error('❌ Failed to send USER_INFO:', error);
+              // Retry after 500ms
+              setTimeout(() => sendUserInfo(attempts + 1), 500);
+            }
+          } else {
+            console.log(`⚠️ Cannot send USER_INFO (attempt ${attempts + 1}) - retrying in 500ms...`);
+            setTimeout(() => sendUserInfo(attempts + 1), 500);
+          }
+        };
+
+        // Start sending with delay to ensure data channel is ready
+        setTimeout(() => sendUserInfo(), 100);
         console.log('✅ =============================================');
       });
       
@@ -209,6 +217,30 @@ const useSimplePeer = (username: string) => {
     socket.on('create-peer-connection', handlePeerConnectionRequest);
   }, []); // Empty deps - stable function
 
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+      setPeer(null);
+    }
+    
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+    
+    setRemoteStream(null);
+    setIsConnected(false);
+    setOpponent(null);
+    setIsOpponentReady(false);
+    setLastBlinkWinner(null);
+    
+    // Reset room creation/joining flags
+    hasJoinedRoomRef.current = false;
+    hasCreatedRoomRef.current = false;
+  }, []);
+
   // Initialize socket connection
   const initializeSocket = useCallback(() => {
     if (socketRef.current) {
@@ -216,8 +248,10 @@ const useSimplePeer = (username: string) => {
       return socketRef.current;
     }
 
-    console.log('🔌 Creating new socket connection to http://localhost:3001');
-    const newSocket = io('http://localhost:3001', {
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+    console.log('🔌 Creating new socket connection to', SOCKET_URL);
+    
+    const newSocket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       timeout: 10000,
       forceNew: false // Allow reusing existing connection
@@ -321,8 +355,17 @@ const useSimplePeer = (username: string) => {
       }
     });
 
+    // Listen for game messages via Socket.IO (reliable fallback)
+    newSocket.on('game-message', (data) => {
+      console.log('📨 Received game message via Socket.IO:', data);
+      handleGameMessage({
+        type: data.type,
+        payload: data.payload
+      });
+    });
+
     return newSocket;
-  }, []);
+  }, [registerPeerListener, cleanup]);
 
   // Create peer connection
   const createPeer = useCallback((isInitiator: boolean, targetSocketId?: string) => {
@@ -497,7 +540,24 @@ const useSimplePeer = (username: string) => {
       message
     });
 
-    // Try WebRTC data channel first
+    // ALWAYS use Socket.IO for critical messages (READY_STATE, BLINK)
+    // These must be reliable and WebRTC data channel may not be ready
+    if (message.type === 'READY_STATE' || message.type === 'BLINK') {
+      if (socketRef.current) {
+        console.log('📤 Sending critical message via Socket.IO:', message);
+        socketRef.current.emit('game-message', {
+          roomId: roomIdRef.current,
+          type: message.type,
+          payload: message.payload
+        });
+        return; // Don't try WebRTC for critical messages
+      } else {
+        console.warn('⚠️ Cannot send critical message: no Socket.IO connection');
+        return;
+      }
+    }
+
+    // Try WebRTC data channel for non-critical messages
     let sentViaWebRTC = false;
     if (peerRef.current && isConnected) {
       try {
@@ -509,29 +569,29 @@ const useSimplePeer = (username: string) => {
       }
     }
 
-    // Fallback to Socket.IO for critical messages (like READY_STATE)
-    if (!sentViaWebRTC || message.type === 'READY_STATE') {
-      if (socketRef.current) {
-        console.log('📤 Sending via Socket.IO fallback:', message);
-        socketRef.current.emit('ready-state', {
-          isReady: message.payload?.isReady,
-          type: message.type
-        });
-      } else {
-        console.warn('⚠️ Cannot send data: no connection available');
-      }
+    // Socket.IO fallback for non-critical messages
+    if (!sentViaWebRTC && socketRef.current) {
+      console.log('📤 Sending via Socket.IO fallback:', message);
+      socketRef.current.emit('game-message', {
+        roomId: roomIdRef.current,
+        type: message.type,
+        payload: message.payload
+      });
     }
   }, [isConnected]);
 
   // Create room
   const createRoom = useCallback(async (roomId: string) => {
     console.log('🏠 HOST: createRoom called with roomId:', roomId, 'username:', username);
-    
+
+    // Store roomId for Socket.IO messages
+    roomIdRef.current = roomId;
+
     if (hasCreatedRoomRef.current) {
       console.log('🏠 HOST: Room already created, skipping duplicate createRoom call');
       return;
     }
-    
+
     hasCreatedRoomRef.current = true;
     
     if (!socketRef.current) {
@@ -577,12 +637,15 @@ const useSimplePeer = (username: string) => {
   // Join room
   const joinRoom = useCallback(async (roomId: string) => {
     console.log('🚪 Attempting to join room:', roomId, 'with username:', username);
-    
+
+    // Store roomId for Socket.IO messages
+    roomIdRef.current = roomId;
+
     if (hasJoinedRoomRef.current) {
       console.log('👤 GUEST: Already attempted to join room, skipping duplicate joinRoom call');
       return;
     }
-    
+
     hasJoinedRoomRef.current = true;
     
     if (!socketRef.current) {
@@ -612,30 +675,6 @@ const useSimplePeer = (username: string) => {
     setConnectionStatus('Joining room...');
     socketRef.current?.emit('join-room', { roomId, username });
   }, [username, initializeSocket, createPeer]);
-
-  // Cleanup
-  const cleanup = useCallback(() => {
-    if (peerRef.current) {
-      peerRef.current.destroy();
-      peerRef.current = null;
-      setPeer(null);
-    }
-    
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    
-    setRemoteStream(null);
-    setIsConnected(false);
-    setOpponent(null);
-    setIsOpponentReady(false);
-    setLastBlinkWinner(null);
-    
-    // Reset room creation/joining flags
-    hasJoinedRoomRef.current = false;
-    hasCreatedRoomRef.current = false;
-  }, []);
 
   // Initialize socket early (on mount) to receive create-peer-connection events from global matchmaking
   useEffect(() => {
@@ -671,8 +710,27 @@ const useSimplePeer = (username: string) => {
   // Reset game state (for continuous mode between matches)
   const resetGameState = useCallback(() => {
     console.log('🔄 Resetting game state for new match');
+
+    // Destroy old peer connection but keep local stream
+    if (peerRef.current) {
+      console.log('🔄 Destroying old peer connection');
+      peerRef.current.destroy();
+      peerRef.current = null;
+      setPeer(null);
+    }
+
+    // Clear remote stream and connection state
+    setRemoteStream(null);
+    setIsConnected(false);
+    setOpponent(null);
     setLastBlinkWinner(null);
     setIsOpponentReady(false);
+
+    // Reset room flags to allow joining new room
+    hasJoinedRoomRef.current = false;
+    hasCreatedRoomRef.current = false;
+
+    console.log('✅ Game state reset complete, ready for new match');
   }, []);
 
   // Initialize local stream for continuous mode (without creating a room)

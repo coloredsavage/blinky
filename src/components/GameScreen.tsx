@@ -108,7 +108,16 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
         rightEar: opponentRightEar
     } = useRemoteFaceMesh(remoteVideoRef, remoteCanvasRef);
     
-    // Room-based multiplayer hook
+    // Global multiplayer hook - MUST be called BEFORE useSimplePeer to establish socket first
+    const {
+      currentMatch: globalMatch,
+      submitGameResult,
+      joinGlobalQueue,
+      isInQueue,
+      socket: globalSocket,
+    } = useGlobalMultiplayer(mode === GameMode.Global); // Enable for global mode to get the socket
+
+    // Room-based multiplayer hook - pass global socket to prevent duplication
     const {
       connection,
       isConnected,
@@ -125,15 +134,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       resetGameState,
       initializeLocalStream,
       isLocalStreamReady,
-    } = useSimplePeer(username);
-
-    // Global multiplayer hook (always disabled to prevent socket conflicts)
-    const {
-      currentMatch: globalMatch,
-      submitGameResult,
-      joinGlobalQueue,
-      isInQueue,
-    } = useGlobalMultiplayer(false); // Always disabled to prevent socket conflicts with useSimplePeer
+      cleanupPeerOnly,
+      initializePeer,
+    } = useSimplePeer(username, mode === GameMode.Global ? globalSocket : null);
 
     // Continuous run mechanics - used by BOTH Continuous and Global modes
     // Continuous mode = endless local practice with continuous mechanics
@@ -332,6 +335,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
             console.log('🧹 [VICTORY FLOW] Clearing globalOpponent (was:', globalOpponent?.username, ')');
             setGlobalOpponent(null); // Clear defeated opponent so new one can be detected
+
+            // Cleanup peer connection but keep camera running (continuous play optimization)
+            console.log('🧹 [VICTORY FLOW] Calling cleanupPeerOnly to destroy old peer (keeping camera active)');
+            cleanupPeerOnly();
 
             // Rejoin the queue using the simplePeerSocket to avoid conflicts
             console.log('🔄 [VICTORY FLOW] Rejoining global queue for next opponent:', username);
@@ -768,6 +775,10 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 socketId: newMatchId  // Use matchId to make each opponent unique
             });
 
+            // Initialize peer for new match (camera already running from cleanupPeerOnly)
+            console.log('🔄 [MATCH FOUND] Calling initializePeer for new match');
+            initializePeer();
+
             // Create or join the new peer connection
             if (matchData.isHost) {
                 console.log(`🏠 [MATCH FOUND] Calling createRoom(${newMatchId})`);
@@ -791,6 +802,27 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             console.log('✅ [LISTENER CLEANUP] Listener removed');
         };
     }, [mode, simplePeerSocket, createRoom, joinRoom, isSearchingNextOpponent]);
+
+    // Socket reconnection handler for continuous play
+    useEffect(() => {
+        if (!isGlobalMode || !simplePeerSocket) return;
+
+        const handleReconnect = () => {
+            console.log('🔄 [RECONNECT] Socket reconnected');
+
+            // If we were searching for an opponent when disconnected, rejoin queue
+            if (isSearchingNextOpponentRef.current) {
+                console.log('🔄 [RECONNECT] Was searching, rejoining global queue');
+                simplePeerSocket.emit('join-global-queue', { username });
+            }
+        };
+
+        simplePeerSocket.on('reconnect', handleReconnect);
+
+        return () => {
+            simplePeerSocket.off('reconnect', handleReconnect);
+        };
+    }, [isGlobalMode, simplePeerSocket, username]);
 
     // Auto-start for Global mode (no splash screen - it's not continuous mode)
     // Use username as stable dependency instead of the entire opponentData object
@@ -1532,6 +1564,43 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                     isVisible={runState.status === 'transitioning' || runState.status === 'searching' || runState.status === 'countdown'}
                     runState={runState}
                 />
+            )}
+
+            {/* Finding Next Opponent Overlay for Global Mode */}
+            {isGlobalMode && isSearchingNextOpponent && (
+                <div className="fixed inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50">
+                    <div className="text-center space-y-8 p-8">
+                        <div className="animate-pulse">
+                            <div className="text-6xl mb-4">🌍</div>
+                            <h2 className="text-4xl font-bold text-white mb-2">
+                                Finding Next Opponent
+                            </h2>
+                            <p className="text-xl text-gray-300">
+                                Searching for your next challenger...
+                            </p>
+                        </div>
+
+                        <div className="flex gap-4 justify-center items-center">
+                            <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                            <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                            <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        </div>
+
+                        <div className="mt-8">
+                            <button
+                                onClick={() => {
+                                    console.log('🛑 User clicked Return to Menu during search');
+                                    setIsSearchingNextOpponent(false);
+                                    isSearchingNextOpponentRef.current = false;
+                                    onExit();
+                                }}
+                                className="btn-secondary text-lg px-8 py-3 bg-gray-700 hover:bg-gray-600 border-2 border-gray-500 rounded-lg transition-all"
+                            >
+                                Return to Menu
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {/* Share Card Modal */}

@@ -12,7 +12,8 @@ export interface GameMessage {
   payload?: any;
 }
 
-const useSimplePeer = (username: string) => {
+// CRITICAL CHANGE: Accept external socket as parameter to prevent duplicate connections
+const useSimplePeer = (username: string, externalSocket: Socket | null = null) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [peer, setPeer] = useState<SimplePeer.Instance | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -23,13 +24,23 @@ const useSimplePeer = (username: string) => {
   const [connectionStatus, setConnectionStatus] = useState<string>('Not connected');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isLocalStreamReady, setIsLocalStreamReady] = useState<boolean>(false);
-  
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  // CRITICAL: Use external socket if provided, otherwise allow internal creation
+  const socketRef = useRef<Socket | null>(externalSocket);
   const roomIdRef = useRef<string | null>(null);
   const hasJoinedRoomRef = useRef<boolean>(false);
   const hasCreatedRoomRef = useRef<boolean>(false);
+
+  // Update socket ref when external socket changes
+  useEffect(() => {
+    if (externalSocket) {
+      console.log('📌 [useSimplePeer] Using external socket:', externalSocket.id);
+      socketRef.current = externalSocket;
+      setSocket(externalSocket);
+    }
+  }, [externalSocket]);
 
   // WebRTC Configuration - using the same STUN/TURN servers from the example
   const rtcConfig = {
@@ -217,32 +228,66 @@ const useSimplePeer = (username: string) => {
     socket.on('create-peer-connection', handlePeerConnectionRequest);
   }, []); // Empty deps - stable function
 
-  // Cleanup function
-  const cleanup = useCallback(() => {
+  // Cleanup only peer connection (keep camera for continuous play)
+  const cleanupPeerOnly = useCallback(() => {
+    console.log('🧹 [cleanupPeerOnly] Cleaning up peer connection only (keeping camera)');
+
     if (peerRef.current) {
       peerRef.current.destroy();
       peerRef.current = null;
       setPeer(null);
     }
-    
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    
+
     setRemoteStream(null);
     setIsConnected(false);
     setOpponent(null);
     setIsOpponentReady(false);
     setLastBlinkWinner(null);
-    
+
+    console.log('✅ [cleanupPeerOnly] Peer cleanup complete, camera still active');
+  }, []);
+
+  // Full cleanup (stop camera and disconnect everything)
+  const cleanup = useCallback(() => {
+    console.log('🧹 [cleanup] Full cleanup - stopping camera and destroying peer');
+
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+      setPeer(null);
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+      setIsLocalStreamReady(false);
+    }
+
+    setRemoteStream(null);
+    setIsConnected(false);
+    setOpponent(null);
+    setIsOpponentReady(false);
+    setLastBlinkWinner(null);
+
     // Reset room creation/joining flags
     hasJoinedRoomRef.current = false;
     hasCreatedRoomRef.current = false;
+
+    console.log('✅ [cleanup] Full cleanup complete');
   }, []);
 
   // Initialize socket connection
   const initializeSocket = useCallback(() => {
+    // If external socket is provided, use it instead of creating a new one
+    if (externalSocket) {
+      console.log('🔌 Using external socket (global matchmaking)');
+      socketRef.current = externalSocket;
+      setSocket(externalSocket);
+      // Register peer listener on external socket
+      registerPeerListener(externalSocket);
+      return externalSocket;
+    }
+
     if (socketRef.current) {
       console.log('🔌 Socket already exists, reusing...');
       return socketRef.current;
@@ -365,7 +410,7 @@ const useSimplePeer = (username: string) => {
     });
 
     return newSocket;
-  }, [registerPeerListener, cleanup]);
+  }, [externalSocket, registerPeerListener, cleanup]);
 
   // Create peer connection
   const createPeer = useCallback((isInitiator: boolean, targetSocketId?: string) => {
@@ -678,12 +723,16 @@ const useSimplePeer = (username: string) => {
 
   // Initialize socket early (on mount) to receive create-peer-connection events from global matchmaking
   useEffect(() => {
-    // Initialize socket immediately so it's ready to receive events from global matchmaking
-    if (!socketRef.current) {
-      console.log('[useSimplePeer] Early socket initialization for global matchmaking');
+    // Only initialize if no external socket provided
+    if (!externalSocket && !socketRef.current) {
+      console.log('[useSimplePeer] Early socket initialization for room-based mode');
       initializeSocket();
+    } else if (externalSocket) {
+      console.log('[useSimplePeer] Using external socket, skipping internal initialization');
+      // Register peer listener on external socket
+      registerPeerListener(externalSocket);
     }
-  }, [initializeSocket]);
+  }, [externalSocket, initializeSocket, registerPeerListener]);
 
   // Debug logging for connection state changes
   useEffect(() => {
@@ -700,12 +749,16 @@ const useSimplePeer = (username: string) => {
   useEffect(() => {
     return () => {
       cleanup();
-      if (socketRef.current) {
+      // Only disconnect socket if it's not an external one (we don't own it)
+      if (socketRef.current && !externalSocket) {
+        console.log('🔌 [unmount] Disconnecting internal socket');
         socketRef.current.disconnect();
         socketRef.current = null;
+      } else if (externalSocket) {
+        console.log('🔌 [unmount] Keeping external socket connected');
       }
     };
-  }, [cleanup]);
+  }, [cleanup, externalSocket]);
 
   // Reset game state (for continuous mode between matches)
   const resetGameState = useCallback(() => {
@@ -757,6 +810,25 @@ const useSimplePeer = (username: string) => {
     }
   }, []);
 
+  // Initialize peer connection explicitly (for continuous play after cleanup)
+  const initializePeer = useCallback(() => {
+    console.log('🔄 [initializePeer] Setting up peer connection for new match');
+
+    if (!socketRef.current) {
+      console.error('❌ [initializePeer] No socket available');
+      return;
+    }
+
+    if (!localStreamRef.current) {
+      console.error('❌ [initializePeer] No local stream available');
+      return;
+    }
+
+    // Socket is ready and has listeners registered from previous setup
+    // Just wait for server to send create-peer-connection event
+    console.log('✅ [initializePeer] Ready for peer connection, waiting for server signal');
+  }, []);
+
   return {
     // Connection state
     connection: peer,
@@ -767,6 +839,7 @@ const useSimplePeer = (username: string) => {
     connectionStatus,
     socket: socketRef.current,
     isLocalStreamReady,
+    localStream: localStreamRef.current,
 
     // Game state
     isOpponentReady,
@@ -777,8 +850,10 @@ const useSimplePeer = (username: string) => {
     joinRoom,
     sendData,
     cleanup,
+    cleanupPeerOnly,
     resetGameState,
-    initializeLocalStream
+    initializeLocalStream,
+    initializePeer
   };
 };
 

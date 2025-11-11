@@ -21,7 +21,8 @@
     "@types/react-dom": "^19.1.7",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "simple-peer": "^9.11.1"
+    "simple-peer": "^9.11.1",
+    "util": "^0.12.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

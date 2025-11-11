@@ -6,15 +6,15 @@ export default defineConfig({
   plugins: [react()],
   define: {
     global: 'globalThis',
-    process: 'process',
   },
   optimizeDeps: {
-    include: ['simple-peer']
+    include: ['simple-peer', 'buffer', 'process']
   },
   resolve: {
     alias: {
       buffer: 'buffer',
       process: 'process/browser',
+      util: 'util',
     }
   }
 })

@@ -58,6 +58,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
     const matchFoundTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const hasStartedCountdownRef = useRef(false); // Track if countdown started for current opponent
     const currentMatchIdRef = useRef<string | null>(null); // Track current match ID to prevent stale connections
+    const hasJoinedCurrentRoomRef = useRef(false); // Prevent duplicate createRoom/joinRoom calls
 
     // For Global mode, track opponent separately since we don't use continuous-run server system
     const [globalOpponent, setGlobalOpponent] = useState<{ username: string; socketId: string } | null>(null);
@@ -509,6 +510,29 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
 
     useEffect(() => {
         if ((mode === GameMode.Multiplayer || mode === GameMode.Global) && roomId) {
+            // CRITICAL: Only call createRoom/joinRoom when socket is connected
+            // This prevents race conditions where room is created before socket is ready
+            const socketToCheck = mode === GameMode.Global ? globalSocket : simplePeerSocket;
+
+            if (!socketToCheck || !socketToCheck.connected) {
+                console.log(`⏳ Waiting for socket to connect before ${isHost ? 'creating' : 'joining'} room...`, {
+                    mode,
+                    roomId,
+                    hasSocket: !!socketToCheck,
+                    socketConnected: socketToCheck?.connected,
+                    socketId: socketToCheck?.id
+                });
+                return;
+            }
+
+            // Prevent duplicate calls (React Strict Mode causes double mounting)
+            if (hasJoinedCurrentRoomRef.current) {
+                console.log(`⏭️ Already joined room ${roomId}, skipping duplicate call`);
+                return;
+            }
+
+            hasJoinedCurrentRoomRef.current = true;
+
             if (isHost) {
                 console.log(`🏠 HOST: useEffect calling createRoom for ${mode === GameMode.Global ? 'matchId' : 'roomId'}:`, roomId);
                 createRoom(roomId);
@@ -517,7 +541,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
                 joinRoom(roomId);
             }
         }
-    }, [mode, roomId, isHost]); // Removed createRoom, joinRoom from dependencies to prevent re-runs
+    }, [mode, roomId, isHost, globalSocket, simplePeerSocket, createRoom, joinRoom]); // Added socket dependencies to re-run when socket connects
     
     useEffect(() => {
         // Don't process lastBlinkWinner if we're searching for next opponent (continuous mode)
@@ -763,6 +787,9 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             console.log('🔍 [MATCH FOUND] Setting isSearchingNextOpponent = false (both state and ref)');
             setIsSearchingNextOpponent(false);
             isSearchingNextOpponentRef.current = false;
+
+            // Reset room join flag to allow joining new room
+            hasJoinedCurrentRoomRef.current = false;
 
             // The match data includes opponent info and new matchId
             const newMatchId = matchData.matchId;

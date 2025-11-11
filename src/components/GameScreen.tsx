@@ -134,6 +134,7 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
       resetGameState,
       initializeLocalStream,
       isLocalStreamReady,
+      localStream,
       cleanupPeerOnly,
       initializePeer,
     } = useSimplePeer(username, mode === GameMode.Global ? globalSocket : null);
@@ -337,10 +338,19 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             setGlobalOpponent(null); // Clear defeated opponent so new one can be detected
 
             // Cleanup peer connection but keep camera running (continuous play optimization)
-            console.log('🧹 [VICTORY FLOW] Calling cleanupPeerOnly to destroy old peer (keeping camera active)');
+            console.log('🧹 ========== VICTORY FLOW: CLEANUP PHASE ==========');
+            console.log('🧹 [VICTORY FLOW] About to call cleanupPeerOnly');
+            console.log('🧹 [VICTORY FLOW] Pre-cleanup state:', {
+              hasConnection: !!connection,
+              isConnected,
+              hasRemoteStream: !!remoteStream,
+              opponent: opponent?.username
+            });
             cleanupPeerOnly();
+            console.log('✅ [VICTORY FLOW] cleanupPeerOnly completed');
 
             // Rejoin the queue using the simplePeerSocket to avoid conflicts
+            console.log('🔄 ========== VICTORY FLOW: REJOIN QUEUE PHASE ==========');
             console.log('🔄 [VICTORY FLOW] Rejoining global queue for next opponent:', username);
             console.log('🔌 [VICTORY FLOW] Socket status:', {
               exists: !!simplePeerSocket,
@@ -776,19 +786,40 @@ const GameScreen: React.FC<GameScreenProps> = ({ mode, username, roomId, onExit,
             });
 
             // Initialize peer for new match (camera already running from cleanupPeerOnly)
-            console.log('🔄 [MATCH FOUND] Calling initializePeer for new match');
+            console.log('🔄 ========== MATCH FOUND: INITIALIZE PEER PHASE ==========');
+            console.log('🔄 [MATCH FOUND] About to call initializePeer');
+            console.log('🔄 [MATCH FOUND] Pre-init peer state:', {
+              hasConnection: !!connection,
+              isConnected,
+              hasRemoteStream: !!remoteStream,
+              hasSocket: !!simplePeerSocket,
+              socketConnected: simplePeerSocket?.connected
+            });
             initializePeer();
+            console.log('✅ [MATCH FOUND] initializePeer() called');
 
             // Create or join the new peer connection
+            console.log('🔄 ========== MATCH FOUND: CREATE/JOIN ROOM PHASE ==========');
             if (matchData.isHost) {
-                console.log(`🏠 [MATCH FOUND] Calling createRoom(${newMatchId})`);
+                console.log(`🏠 [MATCH FOUND] About to call createRoom(${newMatchId})`);
+                console.log('🏠 [MATCH FOUND] Current state before createRoom:', {
+                  hasLocalStream: !!localStream,
+                  socketConnected: simplePeerSocket?.connected,
+                  hasExistingPeer: !!connection
+                });
                 createRoom(newMatchId);
                 console.log('✅ [MATCH FOUND] createRoom() called');
             } else {
-                console.log(`👤 [MATCH FOUND] Calling joinRoom(${newMatchId})`);
+                console.log(`👤 [MATCH FOUND] About to call joinRoom(${newMatchId})`);
+                console.log('👤 [MATCH FOUND] Current state before joinRoom:', {
+                  hasLocalStream: !!localStream,
+                  socketConnected: simplePeerSocket?.connected,
+                  hasExistingPeer: !!connection
+                });
                 joinRoom(newMatchId);
                 console.log('✅ [MATCH FOUND] joinRoom() called');
             }
+            console.log('🔄 ========== MATCH FOUND HANDLER COMPLETE ==========');
         };
 
         console.log('🔗 [LISTENER SETUP] Attaching event listener to socket');

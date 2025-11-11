@@ -35,8 +35,24 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
 
   // Update socket ref when external socket changes
   useEffect(() => {
+    console.log('🔍 [useSimplePeer] Socket update effect triggered:', {
+      hasExternalSocket: !!externalSocket,
+      externalSocketId: externalSocket?.id,
+      externalSocketConnected: externalSocket?.connected,
+      currentSocketRef: socketRef.current?.id,
+      timestamp: new Date().toISOString()
+    });
+
     if (externalSocket) {
-      console.log('📌 [useSimplePeer] Using external socket:', externalSocket.id);
+      console.log('📌 [useSimplePeer] Using external socket:', {
+        socketId: externalSocket.id,
+        connected: externalSocket.connected,
+        listeners: {
+          'create-peer-connection': externalSocket.listeners('create-peer-connection').length,
+          'webrtc-offer': externalSocket.listeners('webrtc-offer').length,
+          'webrtc-answer': externalSocket.listeners('webrtc-answer').length,
+        }
+      });
       socketRef.current = externalSocket;
       setSocket(externalSocket);
     }
@@ -172,7 +188,7 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
       }, 1000);
 
       newPeer.on('stream', (stream) => {
-        console.log('📹 ========== RECEIVED REMOTE STREAM ==========');
+        console.log('📹 ========== RECEIVED REMOTE STREAM (INITIATOR) ==========');
         console.log('📹 Stream ID:', stream.id);
         console.log('📹 Stream active:', stream.active);
         console.log('📹 Stream tracks:', stream.getTracks().map(t => ({
@@ -182,8 +198,15 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
           id: t.id,
           label: t.label
         })));
+        console.log('📹 Current peer state:', {
+          peerConnected: newPeer.connected,
+          peerDestroyed: newPeer.destroyed,
+          hasLocalStream: !!localStreamRef.current,
+          localStreamTracks: localStreamRef.current?.getTracks().length
+        });
         console.log('📹 Setting remote stream in state...');
         setRemoteStream(stream);
+        console.log('✅ Remote stream set successfully');
         console.log('📹 ========================================');
       });
 
@@ -230,22 +253,47 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
 
   // Cleanup only peer connection (keep camera for continuous play)
   const cleanupPeerOnly = useCallback(() => {
-    console.log('🧹 [cleanupPeerOnly] Cleaning up peer connection only (keeping camera)');
+    console.log('🧹 ========== CLEANUP PEER ONLY START ==========');
+    console.log('🧹 [cleanupPeerOnly] Current state before cleanup:', {
+      hasPeer: !!peerRef.current,
+      peerConnected: peerRef.current?.connected,
+      peerDestroyed: peerRef.current?.destroyed,
+      hasLocalStream: !!localStreamRef.current,
+      localStreamActive: localStreamRef.current?.active,
+      localStreamTracks: localStreamRef.current?.getTracks().map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState
+      })),
+      hasRemoteStream: !!remoteStream,
+      isConnected
+    });
 
     if (peerRef.current) {
+      console.log('🧹 [cleanupPeerOnly] Destroying peer connection...');
       peerRef.current.destroy();
       peerRef.current = null;
       setPeer(null);
+      console.log('✅ Peer destroyed');
+    } else {
+      console.log('⚠️ [cleanupPeerOnly] No peer to destroy');
     }
 
+    console.log('🧹 [cleanupPeerOnly] Clearing remote stream and connection state...');
     setRemoteStream(null);
     setIsConnected(false);
     setOpponent(null);
     setIsOpponentReady(false);
     setLastBlinkWinner(null);
 
-    console.log('✅ [cleanupPeerOnly] Peer cleanup complete, camera still active');
-  }, []);
+    console.log('✅ [cleanupPeerOnly] Peer cleanup complete');
+    console.log('📹 [cleanupPeerOnly] Camera state preserved:', {
+      hasLocalStream: !!localStreamRef.current,
+      localStreamActive: localStreamRef.current?.active,
+      trackCount: localStreamRef.current?.getTracks().length
+    });
+    console.log('🧹 ========== CLEANUP PEER ONLY END ==========');
+  }, [remoteStream, isConnected]);
 
   // Full cleanup (stop camera and disconnect everything)
   const cleanup = useCallback(() => {
@@ -627,7 +675,16 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
 
   // Create room
   const createRoom = useCallback(async (roomId: string) => {
-    console.log('🏠 HOST: createRoom called with roomId:', roomId, 'username:', username);
+    console.log('🏠 ========== CREATE ROOM START ==========');
+    console.log('🏠 HOST: createRoom called:', {
+      roomId,
+      username,
+      hasSocket: !!socketRef.current,
+      socketConnected: socketRef.current?.connected,
+      hasLocalStream: !!localStreamRef.current,
+      localStreamActive: localStreamRef.current?.active,
+      hasCreatedBefore: hasCreatedRoomRef.current
+    });
 
     // Store roomId for Socket.IO messages
     roomIdRef.current = roomId;
@@ -659,29 +716,52 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
       });
     }
 
-    // Get user media first
-    try {
-      console.log('🏠 HOST: Getting user media...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-        audio: false // Disable audio for the staring contest
+    // Get user media first (or reuse existing stream)
+    if (!localStreamRef.current) {
+      try {
+        console.log('🏠 HOST: Getting user media (no existing stream)...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          audio: false // Disable audio for the staring contest
+        });
+        localStreamRef.current = stream;
+        setIsLocalStreamReady(true);
+        console.log('✅ HOST: Got user media successfully:', {
+          streamId: stream.id,
+          tracks: stream.getTracks().length,
+          active: stream.active
+        });
+      } catch (error) {
+        console.error('❌ Failed to get user media:', error);
+        setConnectionError('Failed to access camera');
+        return;
+      }
+    } else {
+      console.log('✅ HOST: Reusing existing local stream:', {
+        streamId: localStreamRef.current.id,
+        tracks: localStreamRef.current.getTracks().length,
+        active: localStreamRef.current.active
       });
-      localStreamRef.current = stream;
-      console.log('🏠 HOST: Got user media successfully');
-    } catch (error) {
-      console.error('❌ Failed to get user media:', error);
-      setConnectionError('Failed to access camera');
-      return;
     }
 
-    console.log('🏠 HOST: Emitting create-room event with roomId:', roomId);
+    console.log('🏠 HOST: Emitting create-room event');
     setConnectionStatus('Creating room...');
     socketRef.current?.emit('create-room', { roomId, username });
+    console.log('🏠 ========== CREATE ROOM END ==========');
   }, [username, initializeSocket]);
 
   // Join room
   const joinRoom = useCallback(async (roomId: string) => {
-    console.log('🚪 Attempting to join room:', roomId, 'with username:', username);
+    console.log('🚪 ========== JOIN ROOM START ==========');
+    console.log('🚪 GUEST: joinRoom called:', {
+      roomId,
+      username,
+      hasSocket: !!socketRef.current,
+      socketConnected: socketRef.current?.connected,
+      hasLocalStream: !!localStreamRef.current,
+      localStreamActive: localStreamRef.current?.active,
+      hasJoinedBefore: hasJoinedRoomRef.current
+    });
 
     // Store roomId for Socket.IO messages
     roomIdRef.current = roomId;
@@ -701,24 +781,38 @@ const useSimplePeer = (username: string, externalSocket: Socket | null = null) =
       socketRef.current = socket;
     }
 
-    // Get user media first
-    try {
-      console.log('📹 Getting user media...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-        audio: false
+    // Get user media first (or reuse existing stream)
+    if (!localStreamRef.current) {
+      try {
+        console.log('🚪 GUEST: Getting user media (no existing stream)...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          audio: false
+        });
+        localStreamRef.current = stream;
+        setIsLocalStreamReady(true);
+        console.log('✅ GUEST: Got user media successfully:', {
+          streamId: stream.id,
+          tracks: stream.getTracks().length,
+          active: stream.active
+        });
+      } catch (error) {
+        console.error('❌ Failed to get user media:', error);
+        setConnectionError('Failed to access camera');
+        return;
+      }
+    } else {
+      console.log('✅ GUEST: Reusing existing local stream:', {
+        streamId: localStreamRef.current.id,
+        tracks: localStreamRef.current.getTracks().length,
+        active: localStreamRef.current.active
       });
-      localStreamRef.current = stream;
-      console.log('✅ Got user media successfully');
-    } catch (error) {
-      console.error('❌ Failed to get user media:', error);
-      setConnectionError('Failed to access camera');
-      return;
     }
 
-    console.log('📤 Emitting join-room event...');
+    console.log('🚪 GUEST: Emitting join-room event');
     setConnectionStatus('Joining room...');
     socketRef.current?.emit('join-room', { roomId, username });
+    console.log('🚪 ========== JOIN ROOM END ==========');
   }, [username, initializeSocket, createPeer]);
 
   // Initialize socket early (on mount) to receive create-peer-connection events from global matchmaking
